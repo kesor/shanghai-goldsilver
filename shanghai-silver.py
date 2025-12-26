@@ -16,18 +16,28 @@ response = requests.post(
 )
 
 if response.status_code != 200 or not response.text.strip():
-    # Fallback: use curl to get data
-    import subprocess
-    result = subprocess.run([
-        'curl', '-s', 'https://en.sge.com.cn/graph/quotations',
-        '-H', 'Accept: application/json, text/javascript, */*; q=0.01',
-        '-H', 'Content-Type: application/x-www-form-urlencoded; charset=UTF-8',
-        '-H', 'Origin: https://en.sge.com.cn',
-        '--data-raw', 'instid=Ag(T%2BD)'
-    ], capture_output=True, text=True)
-    data = json.loads(result.stdout)
-else:
+    print("Failed to get data from requests, trying with different headers...")
+    # Try with more complete headers
+    response = requests.post(
+        'https://en.sge.com.cn/graph/quotations',
+        headers={
+            'Accept': 'application/json, text/javascript, */*; q=0.01',
+            'Accept-Language': 'en-US,en;q=0.9',
+            'Content-Type': 'application/x-www-form-urlencoded; charset=UTF-8',
+            'Origin': 'https://en.sge.com.cn',
+            'Referer': 'https://en.sge.com.cn/',
+            'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+            'X-Requested-With': 'XMLHttpRequest'
+        },
+        data='instid=Ag(T%2BD)',
+        timeout=10
+    )
+
+if response.status_code == 200 and response.text.strip():
     data = response.json()
+else:
+    print("Could not fetch data")
+    exit(1)
 
 times = data['times']
 prices = [float(p) for p in data['data']]
