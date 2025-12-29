@@ -35,6 +35,7 @@ ANIMATION_INTERVAL = 250  # milliseconds
 CANDLE_WIDTH = 0.6
 CHART_PADDING = 0.1  # 10% padding above/below chart
 CHART_FIGSIZE = (14, 8)
+CHART_EXPORT_FILENAME = 'silver.png'
 
 # Global data storage
 current_data = None
@@ -426,6 +427,9 @@ def update_plot(frame):
     # Show time labels
     setup_time_labels(ax1, candle_times)
     plt.tight_layout()
+    
+    # Save chart as PNG
+    plt.savefig(CHART_EXPORT_FILENAME, dpi=150, bbox_inches='tight')
 
 def filter_repeated_prices(prices):
     """Remove repeated values at the end from original data"""
