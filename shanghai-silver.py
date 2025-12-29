@@ -28,36 +28,49 @@ USD_CNY_RATE = 7.0060  # Default fallback rate
 TROY_OUNCE_GRAMS = 31.10348
 UPDATE_INTERVAL = 300  # 5 minutes in seconds
 EXCHANGE_RATE_UPDATE_INTERVAL = 3600  # 1 hour in seconds
+SHANGHAI_TIMEZONE = 'Asia/Shanghai'
+
+# Chart configuration
+ANIMATION_INTERVAL = 250  # milliseconds
+CANDLE_WIDTH = 0.6
+CHART_PADDING = 0.1  # 10% padding above/below chart
+CHART_FIGSIZE = (14, 8)
 
 # Global data storage
 current_data = None
 data_lock = threading.Lock()
+exchange_rate_lock = threading.Lock()
 last_fetch_time = 0
 last_exchange_rate_fetch = 0
 shanghai_retry_count = 0
 shutdown_event = threading.Event()
+db_conn = None
 
 # Initialize database
 def init_database():
-    conn = sqlite3.connect('shanghai_silver.db')
+    global db_conn
+    db_conn = sqlite3.connect('shanghai_silver.db', check_same_thread=False)
     
     # Create tables
-    conn.execute('''CREATE TABLE IF NOT EXISTS prices 
+    db_conn.execute('''CREATE TABLE IF NOT EXISTS prices 
                     (timestamp TEXT PRIMARY KEY, price_cny REAL, price_usd REAL, usd_cny_rate REAL)''')
-    conn.execute('''CREATE TABLE IF NOT EXISTS api_requests 
+    db_conn.execute('''CREATE TABLE IF NOT EXISTS api_requests 
                     (date TEXT PRIMARY KEY, alpha_vantage_count INTEGER DEFAULT 0)''')
     
-    conn.commit()
-    conn.close()
+    db_conn.commit()
+
+def close_database():
+    global db_conn
+    if db_conn:
+        db_conn.close()
+        db_conn = None
 
 def get_cached_exchange_rate():
     """Get most recent exchange rate from database"""
     try:
-        conn = sqlite3.connect('shanghai_silver.db')
-        cursor = conn.cursor()
+        cursor = db_conn.cursor()
         cursor.execute('SELECT usd_cny_rate FROM prices WHERE usd_cny_rate IS NOT NULL ORDER BY timestamp DESC LIMIT 1')
         result = cursor.fetchone()
-        conn.close()
         return result[0] if result else USD_CNY_RATE
     except Exception as e:
         logger.error(f"Failed to get cached exchange rate: {e}")
@@ -66,13 +79,11 @@ def get_cached_exchange_rate():
 def can_make_api_request():
     """Check if we can make an Alpha Vantage API request today"""
     try:
-        conn = sqlite3.connect('shanghai_silver.db')
-        cursor = conn.cursor()
+        cursor = db_conn.cursor()
         today = datetime.now().date().isoformat()
         cursor.execute('SELECT alpha_vantage_count FROM api_requests WHERE date = ?', (today,))
         result = cursor.fetchone()
         count = result[0] if result else 0
-        conn.close()
         return count < 24
     except Exception:
         return True
@@ -80,12 +91,10 @@ def can_make_api_request():
 def increment_api_request_count():
     """Increment today's API request count"""
     try:
-        conn = sqlite3.connect('shanghai_silver.db')
         today = datetime.now().date().isoformat()
-        conn.execute('INSERT OR IGNORE INTO api_requests (date, alpha_vantage_count) VALUES (?, 0)', (today,))
-        conn.execute('UPDATE api_requests SET alpha_vantage_count = alpha_vantage_count + 1 WHERE date = ?', (today,))
-        conn.commit()
-        conn.close()
+        db_conn.execute('INSERT OR IGNORE INTO api_requests (date, alpha_vantage_count) VALUES (?, 0)', (today,))
+        db_conn.execute('UPDATE api_requests SET alpha_vantage_count = alpha_vantage_count + 1 WHERE date = ?', (today,))
+        db_conn.commit()
     except Exception as e:
         logger.error(f"Failed to increment API count: {e}")
 
@@ -111,13 +120,15 @@ def fetch_exchange_rate():
     try:
         if not can_make_api_request():
             logger.info("API request limit reached, using cached rate")
-            USD_CNY_RATE = get_cached_exchange_rate()
+            with exchange_rate_lock:
+                USD_CNY_RATE = get_cached_exchange_rate()
             return USD_CNY_RATE
             
         api_key = os.environ.get('ALPHA_VANTAGE_API_KEY')
         if not api_key:
             logger.warning("No Alpha Vantage API key found, using cached rate")
-            USD_CNY_RATE = get_cached_exchange_rate()
+            with exchange_rate_lock:
+                USD_CNY_RATE = get_cached_exchange_rate()
             return USD_CNY_RATE
             
         url = f'https://www.alphavantage.co/query?function=CURRENCY_EXCHANGE_RATE&from_currency=USD&to_currency=CNY&apikey={api_key}'
@@ -128,23 +139,26 @@ def fetch_exchange_rate():
             if 'Realtime Currency Exchange Rate' in data:
                 new_rate = float(data['Realtime Currency Exchange Rate']['5. Exchange Rate'])
                 
-                if validate_exchange_rate(new_rate, USD_CNY_RATE):
-                    increment_api_request_count()
-                    USD_CNY_RATE = new_rate
-                    logger.info(f"Updated USD/CNY rate: {new_rate}")
-                    return new_rate
-                else:
-                    logger.warning(f"Invalid exchange rate {new_rate}, using cached rate")
-                    USD_CNY_RATE = get_cached_exchange_rate()
-                    return USD_CNY_RATE
+                with exchange_rate_lock:
+                    if validate_exchange_rate(new_rate, USD_CNY_RATE):
+                        increment_api_request_count()
+                        USD_CNY_RATE = new_rate
+                        logger.info(f"Updated USD/CNY rate: {new_rate}")
+                        return new_rate
+                    else:
+                        logger.warning(f"Invalid exchange rate {new_rate}, using cached rate")
+                        USD_CNY_RATE = get_cached_exchange_rate()
+                        return USD_CNY_RATE
         
         logger.warning("Failed to fetch exchange rate, using cached rate")
-        USD_CNY_RATE = get_cached_exchange_rate()
+        with exchange_rate_lock:
+            USD_CNY_RATE = get_cached_exchange_rate()
         return USD_CNY_RATE
         
     except Exception as e:
         logger.error(f"Exchange rate fetch error: {e}")
-        USD_CNY_RATE = get_cached_exchange_rate()
+        with exchange_rate_lock:
+            USD_CNY_RATE = get_cached_exchange_rate()
         return USD_CNY_RATE
 
 def filter_times(times, prices):
@@ -179,11 +193,16 @@ def filter_times(times, prices):
 
 def enrich_data(prices):
     """Convert CNY/kg to USD/troy ounce"""
-    return [(p / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE for p in prices]
+    with exchange_rate_lock:
+        rate = USD_CNY_RATE
+    return [(p / 1000) * TROY_OUNCE_GRAMS / rate for p in prices]
+
 def store_data(times, prices, usd_prices):
-    conn = sqlite3.connect('shanghai_silver.db')
-    shanghai_tz = pytz.timezone('Asia/Shanghai')
+    shanghai_tz = pytz.timezone(SHANGHAI_TIMEZONE)
     today = datetime.now(shanghai_tz).date()
+    
+    with exchange_rate_lock:
+        current_rate = USD_CNY_RATE
     
     for time_str, price, usd_price in zip(times, prices, usd_prices):
         if np.isnan(price):
@@ -196,11 +215,10 @@ def store_data(times, prices, usd_prices):
             dt = datetime.combine(today, datetime.min.time().replace(hour=hour, minute=minute))
         
         timestamp = shanghai_tz.localize(dt).isoformat()
-        conn.execute('INSERT OR REPLACE INTO prices VALUES (?, ?, ?, ?)', 
-                    (timestamp, price, usd_price, USD_CNY_RATE))
+        db_conn.execute('INSERT OR REPLACE INTO prices VALUES (?, ?, ?, ?)', 
+                    (timestamp, price, usd_price, current_rate))
     
-    conn.commit()
-    conn.close()
+    db_conn.commit()
 
 def fetch_data_background():
     """Fetch data from API in background thread"""
@@ -351,7 +369,7 @@ def plot_candlesticks(ax, times, candles, color_up='g', color_down='r'):
         height = abs(close_price - open_price)
         bottom = min(open_price, close_price)
         
-        rect = plt.Rectangle((i-0.3, bottom), 0.6, height, 
+        rect = plt.Rectangle((i-CANDLE_WIDTH/2, bottom), CANDLE_WIDTH, height, 
                            facecolor=color, edgecolor='none', alpha=1.0, zorder=2)
         ax.add_patch(rect)
 
@@ -367,17 +385,48 @@ def update_plot(frame):
     times = data['times']
     prices = [float(p) for p in data['data']]
 
-    # Convert CNY/kg to USD/troy ounce (data is already filtered and enriched)
-    usd_prices = [(p / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE for p in prices]
-
     # Get last timestamp for display
     last_update_time = times[-1] if times else "N/A"
 
     # Apply display filtering (remove repeated values at end)
-    filtered_prices = prices.copy()
-    filtered_usd_prices = usd_prices.copy()
+    filtered_prices = filter_repeated_prices(prices)
 
-    # Remove repeated values at the end from original data
+    # Create 5-minute candlesticks
+    candle_times, cny_candles = create_candlesticks(times, filtered_prices)
+
+    # Clear and redraw
+    plt.clf()
+    
+    # Create chart with single axis
+    ax1 = plt.gca()
+    ax2 = setup_axes(ax1)  # Returns same axis now
+
+    # Plot candlesticks
+    plot_candlesticks(ax1, candle_times, cny_candles, color_up='lightgreen', color_down='lightcoral')
+
+    # Add trading session shading
+    add_trading_sessions(ax1, candle_times)
+
+    # Set axis limits and add USD labels
+    setup_axis_limits(ax1, ax2, cny_candles)
+    
+    # Get current exchange rate for title
+    with exchange_rate_lock:
+        current_rate = USD_CNY_RATE
+
+    # Calculate max values for title
+    max_cny, max_usd, max_time = calculate_max_values(cny_candles, candle_times)
+
+    plt.title(f'Shanghai Silver (Ag T+D) 5-Min Candlestick Chart -- Last updated: {last_update_time} CST\nUSD/CNY: {current_rate}, ozt: {TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.0f} ${max_usd:.2f} at {max_time}')
+    ax1.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
+
+    # Show time labels
+    setup_time_labels(ax1, candle_times)
+    plt.tight_layout()
+
+def filter_repeated_prices(prices):
+    """Remove repeated values at the end from original data"""
+    filtered_prices = prices.copy()
     if len(prices) > 5:
         last_original_price = prices[-1]
         consecutive_count = 0
@@ -390,35 +439,22 @@ def update_plot(frame):
         if consecutive_count > 3:
             for i in range(len(prices) - consecutive_count, len(prices)):
                 filtered_prices[i] = np.nan
-                filtered_usd_prices[i] = np.nan
+    return filtered_prices
 
-    # Create 5-minute candlesticks
-    candle_times, cny_candles = create_candlesticks(times, filtered_prices)
-    _, usd_candles = create_candlesticks(times, filtered_usd_prices)
-
-    # Clear and redraw
-    plt.clf()
-    
-    # Create chart with dual y-axes
-    ax1 = plt.gca()
-
-    # Create second y-axis first
-    ax2 = ax1.twinx()
-    ax2.set_ylabel('USD/ozt', color='white')
-    ax2.tick_params(axis='y', labelcolor='white')
-    
-    # Format USD axis with $ prefix
-    ax2.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'${x:.2f}'))
-
-    # Plot candlesticks for CNY on top
-    plot_candlesticks(ax1, candle_times, cny_candles, color_up='lightgreen', color_down='lightcoral')
+def setup_axes(ax1):
+    """Setup single axis with dual labels"""
     ax1.set_ylabel('CNY/kg', color='white')
     ax1.tick_params(axis='y', labelcolor='white')
-    
-    # Format CNY axis with ¥ prefix
     ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'¥{x:.0f}'))
+    
+    # Add USD label on the right side, just right of the price digits
+    ax1.text(1.05, 0.5, 'USD/ozt', transform=ax1.transAxes, rotation=90, 
+             verticalalignment='center', color='white')
+    
+    return ax1  # Return same axis
 
-    # Add trading session shading
+def add_trading_sessions(ax1, candle_times):
+    """Add trading session background shading"""
     night_start = night_end = day_start = day_end = None
     for i, time_str in enumerate(candle_times):
         hour = int(time_str.split(':')[0])
@@ -436,49 +472,61 @@ def update_plot(frame):
     if day_start is not None and day_end is not None:
         ax1.axvspan(day_start-0.5, day_end+0.5, alpha=0.1, color='orange')
 
-    # Find max/min values from valid candles and set y-axis limits
+def setup_axis_limits(ax1, ax2, cny_candles):
+    """Setup axis limits with dual labels on single axis"""
     valid_cny_highs = [c[1] for c in cny_candles if not np.isnan(c[1])]
     valid_cny_lows = [c[2] for c in cny_candles if not np.isnan(c[2])]
-    valid_usd_highs = [c[1] for c in usd_candles if not np.isnan(c[1])]
-    valid_usd_lows = [c[2] for c in usd_candles if not np.isnan(c[2])]
     
     if valid_cny_highs:
         max_cny = max(valid_cny_highs)
         min_cny = min(valid_cny_lows)
-        max_usd = max(valid_usd_highs)
-        min_usd = min(valid_usd_lows)
         
-        # Add 10% padding above and below
+        # Add padding
         cny_range = max_cny - min_cny
+        cny_min = min_cny - cny_range * CHART_PADDING
+        cny_max = max_cny + cny_range * CHART_PADDING
+        ax1.set_ylim(cny_min, cny_max)
         
-        ax1.set_ylim(min_cny - cny_range * 0.1, max_cny + cny_range * 0.1)
+        # Generate nice tick positions for CNY axis
+        import matplotlib.ticker as ticker
+        ax1.yaxis.set_major_locator(ticker.MaxNLocator(nbins=8, prune='both'))
         
-        # Set USD axis to match CNY axis using exchange rate conversion
-        cny_min, cny_max = ax1.get_ylim()
-        usd_min = (cny_min / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE
-        usd_max = (cny_max / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE
-        ax2.set_ylim(usd_min, usd_max)
+        # Get the actual tick positions
+        cny_ticks = ax1.get_yticks()
         
+        # Add USD labels on the right side for each tick
+        with exchange_rate_lock:
+            rate = USD_CNY_RATE
+        
+        for cny_tick in cny_ticks:
+            if cny_min <= cny_tick <= cny_max:  # Only for visible ticks
+                usd_value = (cny_tick / 1000) * TROY_OUNCE_GRAMS / rate
+                ax1.text(1.01, (cny_tick - cny_min) / (cny_max - cny_min), f'${usd_value:.2f}', 
+                        transform=ax1.transAxes, verticalalignment='center', 
+                        horizontalalignment='left', color='white')
+
+def calculate_max_values(cny_candles, candle_times):
+    """Calculate max values for chart title"""
+    valid_cny_highs = [c[1] for c in cny_candles if not np.isnan(c[1])]
+    if valid_cny_highs:
+        max_cny = max(valid_cny_highs)
+        max_usd = (max_cny / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE
         max_idx = next(i for i, c in enumerate(cny_candles) if c[1] == max_cny)
         max_time = candle_times[max_idx]
-    else:
-        max_cny = max_usd = 0
-        max_time = "N/A"
+        return max_cny, max_usd, max_time
+    return 0, 0, "N/A"
 
-    plt.title(f'Shanghai Silver (Ag T+D) 5-Min Candlestick Chart -- Last updated: {last_update_time} CST\nUSD/CNY: {USD_CNY_RATE}, ozt: {TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.0f} ${max_usd:.2f} at {max_time}')
-    plt.grid(True, alpha=0.3)
-
-    # Show time labels
+def setup_time_labels(ax1, candle_times):
+    """Setup time labels on x-axis"""
     step = max(1, len(candle_times) // 10)
     ax1.set_xticks(range(0, len(candle_times), step))
     ax1.set_xticklabels([candle_times[i] for i in range(0, len(candle_times), step)])
-
-    plt.tight_layout()
 
 def signal_handler(signum, frame):
     """Handle shutdown signals gracefully"""
     logger.info(f"Received signal {signum}, shutting down gracefully...")
     shutdown_event.set()
+    close_database()
     plt.close('all')
     sys.exit(0)
 
@@ -499,8 +547,8 @@ while current_data is None and not shutdown_event.is_set():
     time.sleep(0.1)
 
 # Create figure and animation
-fig = plt.figure(figsize=(14, 8))
-ani = FuncAnimation(fig, update_plot, interval=250, cache_frame_data=False)  # Update every 100ms
+fig = plt.figure(figsize=CHART_FIGSIZE)
+ani = FuncAnimation(fig, update_plot, interval=ANIMATION_INTERVAL, cache_frame_data=False)
 
 # Show plot
 plt.show()
