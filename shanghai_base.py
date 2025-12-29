@@ -59,6 +59,7 @@ class ShanghaiMetalChart:
         self.shutdown_event = threading.Event()
         self.db_conn = None
         self.fig = None
+        self.save_png_flag = False
         
     def init_database(self):
         self.db_conn = sqlite3.connect(self.DATABASE_NAME, check_same_thread=False)
@@ -166,12 +167,15 @@ class ShanghaiMetalChart:
             return self.USD_CNY_RATE
 
     def filter_times(self, times, prices):
-        last_update_time = times[-1] if times else "N/A"
-        if times:
-            last_hour, last_minute = map(int, last_update_time.split(':'))
-            last_time_minutes = last_hour * 60 + last_minute
-        else:
+        if not times:
             return times, prices
+            
+        # Get current Shanghai time for comparison
+        shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
+        current_shanghai = datetime.now(shanghai_tz)
+        current_hour = current_shanghai.hour
+        current_minute = current_shanghai.minute
+        current_time_minutes = current_hour * 60 + current_minute
         
         filtered_times = []
         filtered_prices = []
@@ -180,12 +184,14 @@ class ShanghaiMetalChart:
             hour, minute = map(int, time_str.split(':'))
             data_time_minutes = hour * 60 + minute
             
+            # Handle day rollover for both current time and data time
             if hour < 20:
                 data_time_minutes += 24 * 60
-            if last_time_minutes < 20 * 60:
-                last_time_minutes += 24 * 60
+            if current_hour < 20:
+                current_time_minutes += 24 * 60
             
-            if data_time_minutes <= last_time_minutes:
+            # Only keep data that's not in the future
+            if data_time_minutes <= current_time_minutes:
                 filtered_times.append(time_str)
                 filtered_prices.append(prices[i])
         
@@ -335,15 +341,10 @@ class ShanghaiMetalChart:
                     with self.data_lock:
                         self.current_data = data
                         self.last_fetch_time = current_time
+                        self.save_png_flag = True  # Signal main thread to save PNG
                     
                     self.shanghai_retry_count = 0
                     logger.info(f"Data updated at {datetime.now().strftime('%H:%M:%S')}")
-                    
-                    # Save chart as PNG atomically when new data arrives
-                    with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
-                        self.fig.savefig(temp_file.name, dpi=150, bbox_inches='tight')
-                        temp_name = temp_file.name
-                    os.rename(temp_name, self.CHART_EXPORT_FILENAME)
                 else:
                     raise requests.RequestException("Empty response")
                     
@@ -362,10 +363,15 @@ class ShanghaiMetalChart:
             if self.current_data is None:
                 return
             data = self.current_data.copy()
+            save_png = self.save_png_flag
+            self.save_png_flag = False  # Reset flag
 
         times = data['times']
         prices = [float(p) for p in data['data']]
-        last_update_time = times[-1] if times else "N/A"
+        
+        # Get current Shanghai time for display
+        shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
+        current_shanghai_time = datetime.now(shanghai_tz).strftime('%H:%M:%S')
 
         filtered_prices = self.filter_repeated_prices(prices)
         candle_times, cny_candles = self.create_candlesticks(times, filtered_prices)
@@ -384,11 +390,21 @@ class ShanghaiMetalChart:
 
         max_cny, max_usd, max_time = self.calculate_max_values(cny_candles, candle_times)
 
-        plt.title(f'{self.CHART_TITLE} 5-Min Candlestick Chart -- Last updated: {last_update_time} CST\nUSD/CNY: {current_rate}, ozt: {self.TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.{self.CNY_PRECISION}f} ${max_usd:.{self.USD_PRECISION}f} at {max_time}')
+        plt.title(f'{self.CHART_TITLE} 5-Min Candlestick Chart -- Last updated: {current_shanghai_time} CST\nUSD/CNY: {current_rate}, ozt: {self.TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.{self.CNY_PRECISION}f} ${max_usd:.{self.USD_PRECISION}f} at {max_time}')
         ax1.grid(True, alpha=0.3, axis='y')
 
         self.setup_time_labels(ax1, candle_times)
         plt.tight_layout()
+        
+        # Save PNG from main thread when new data arrived
+        if save_png:
+            try:
+                with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+                    self.fig.savefig(temp_file.name, dpi=150, bbox_inches='tight')
+                    temp_name = temp_file.name
+                os.rename(temp_name, self.CHART_EXPORT_FILENAME)
+            except Exception as e:
+                logger.error(f"Failed to save PNG: {e}")
 
     def filter_repeated_prices(self, prices):
         filtered_prices = prices.copy()
