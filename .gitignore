@@ -1,2 +1,3 @@
 .direnv/
-shanghai_silver.db
+*.db
+*.png

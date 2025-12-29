@@ -34,7 +34,12 @@ ANIMATION_INTERVAL = 250  # milliseconds
 CANDLE_WIDTH = 0.6
 CHART_PADDING = 0.1  # 10% padding above/below chart
 CHART_FIGSIZE = (14, 8)
-CHART_EXPORT_FILENAME = 'silver.png'
+CHART_EXPORT_FILENAME = 'gold.png'
+
+# Database configuration
+DATABASE_NAME = 'shanghai_gold.db'
+API_INSTRUMENT = 'Au(T%2BD)'
+CHART_TITLE = 'Shanghai Gold (Au T+D)'
 
 # Global data storage
 current_data = None
@@ -50,7 +55,7 @@ fig = None
 # Initialize database
 def init_database():
     global db_conn
-    db_conn = sqlite3.connect('shanghai_silver.db', check_same_thread=False)
+    db_conn = sqlite3.connect(DATABASE_NAME, check_same_thread=False)
     
     # Create tables
     db_conn.execute('''CREATE TABLE IF NOT EXISTS prices 
@@ -193,10 +198,10 @@ def filter_times(times, prices):
     return filtered_times, filtered_prices
 
 def enrich_data(prices):
-    """Convert CNY/kg to USD/troy ounce"""
+    """Convert CNY/gram to USD/troy ounce (gold is already per gram)"""
     with exchange_rate_lock:
         rate = USD_CNY_RATE
-    return [(p / 1000) * TROY_OUNCE_GRAMS / rate for p in prices]
+    return [p * TROY_OUNCE_GRAMS / rate for p in prices]
 
 def store_data(times, prices, usd_prices):
     shanghai_tz = pytz.timezone(SHANGHAI_TIMEZONE)
@@ -242,7 +247,7 @@ def fetch_data_background():
                 time.sleep(1)
                 continue
                 
-            # Fetch Shanghai Silver data
+            # Fetch Shanghai Gold data
             response = requests.post(
                 'https://en.sge.com.cn/graph/quotations',
                 headers={
@@ -251,7 +256,7 @@ def fetch_data_background():
                     'Origin': 'https://en.sge.com.cn',
                     'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
                 },
-                data='instid=Ag(T%2BD)',
+                data='instid=' + API_INSTRUMENT,
                 timeout=10
             )
 
@@ -268,7 +273,7 @@ def fetch_data_background():
                         'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
                         'X-Requested-With': 'XMLHttpRequest'
                     },
-                    data='instid=Ag(T%2BD)',
+                    data='instid=' + API_INSTRUMENT,
                     timeout=10
                 )
 
@@ -429,7 +434,7 @@ def update_plot(frame):
     # Calculate max values for title
     max_cny, max_usd, max_time = calculate_max_values(cny_candles, candle_times)
 
-    plt.title(f'Shanghai Silver (Ag T+D) 5-Min Candlestick Chart -- Last updated: {last_update_time} CST\nUSD/CNY: {current_rate}, ozt: {TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.0f} ${max_usd:.2f} at {max_time}')
+    plt.title(f'{CHART_TITLE} 5-Min Candlestick Chart -- Last updated: {last_update_time} CST\nUSD/CNY: {current_rate}, ozt: {TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.2f} ${max_usd:.0f} at {max_time}')
     ax1.grid(True, alpha=0.3, axis='y')  # Only horizontal grid lines
 
     # Show time labels
@@ -455,9 +460,9 @@ def filter_repeated_prices(prices):
 
 def setup_axes(ax1):
     """Setup single axis with dual labels"""
-    ax1.set_ylabel('CNY/kg', color='white')
+    ax1.set_ylabel('CNY/g', color='white')
     ax1.tick_params(axis='y', labelcolor='white')
-    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'¥{x:.0f}'))
+    ax1.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, p: f'¥{x:.2f}'))
     
     # Add USD label on the right side, just right of the price digits
     ax1.text(1.05, 0.5, 'USD/ozt', transform=ax1.transAxes, rotation=90, 
@@ -512,8 +517,8 @@ def setup_axis_limits(ax1, ax2, cny_candles):
         
         for cny_tick in cny_ticks:
             if cny_min <= cny_tick <= cny_max:  # Only for visible ticks
-                usd_value = (cny_tick / 1000) * TROY_OUNCE_GRAMS / rate
-                ax1.text(1.01, (cny_tick - cny_min) / (cny_max - cny_min), f'${usd_value:.2f}', 
+                usd_value = cny_tick * TROY_OUNCE_GRAMS / rate  # Gold is already per gram
+                ax1.text(1.01, (cny_tick - cny_min) / (cny_max - cny_min), f'${usd_value:.0f}', 
                         transform=ax1.transAxes, verticalalignment='center', 
                         horizontalalignment='left', color='white')
 
@@ -522,7 +527,7 @@ def calculate_max_values(cny_candles, candle_times):
     valid_cny_highs = [c[1] for c in cny_candles if not np.isnan(c[1])]
     if valid_cny_highs:
         max_cny = max(valid_cny_highs)
-        max_usd = (max_cny / 1000) * TROY_OUNCE_GRAMS / USD_CNY_RATE
+        max_usd = max_cny * TROY_OUNCE_GRAMS / USD_CNY_RATE  # Gold conversion
         max_idx = next(i for i, c in enumerate(cny_candles) if c[1] == max_cny)
         max_time = candle_times[max_idx]
         return max_cny, max_usd, max_time
