@@ -1,23 +1,22 @@
 #!/usr/bin/env python3
-import requests
-import matplotlib.pyplot as plt
-import json
-import time
-import threading
-from datetime import datetime
-import pytz
-import numpy as np
-from matplotlib.animation import FuncAnimation
-import pandas as pd
-import sqlite3
-import os
 import logging
+import os
 import signal
 import sys
 import tempfile
+import threading
+import time
+from datetime import datetime, timedelta
+
+import matplotlib.pyplot as plt
+import numpy as np
+import pytz
+import requests
+import sqlite3
+from matplotlib.animation import FuncAnimation
 
 # Configure logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.INFO, format='%(asctime)s %(levelname)s: %(message)s')
 logger = logging.getLogger(__name__)
 
 # Set dark theme
@@ -204,7 +203,10 @@ class ShanghaiMetalChart:
 
     def store_data(self, times, prices, usd_prices):
         shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
-        today = datetime.now(shanghai_tz).date()
+        current_shanghai = datetime.now(shanghai_tz)
+        today = current_shanghai.date()
+        yesterday = today - timedelta(days=1)
+        current_hour = current_shanghai.hour
         
         with self.exchange_rate_lock:
             current_rate = self.USD_CNY_RATE
@@ -213,10 +215,14 @@ class ShanghaiMetalChart:
             if np.isnan(price):
                 continue
             hour, minute = map(int, time_str.split(':'))
-            if hour < 6:
-                dt = datetime.combine(today, datetime.min.time().replace(hour=hour, minute=minute)) + pd.Timedelta(days=1)
+
+            # Date logic for you to fix
+            if current_hour > 0 and hour < 0:
+                date_to_use = yesterday
             else:
-                dt = datetime.combine(today, datetime.min.time().replace(hour=hour, minute=minute))
+                date_to_use = today
+
+            dt = datetime.combine(date_to_use, datetime.min.time().replace(hour=hour, minute=minute))
             
             timestamp = shanghai_tz.localize(dt).isoformat()
             self.db_conn.execute('INSERT OR REPLACE INTO prices VALUES (?, ?, ?, ?)', 
@@ -358,24 +364,58 @@ class ShanghaiMetalChart:
                 logger.error(f"Data fetch error: {type(e).__name__}: {e}")
                 time.sleep(5)
 
+    def get_chart_data(self):
+        """Get all data for current trading day from database"""
+        try:
+            shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
+            current_shanghai = datetime.now(shanghai_tz)
+            today = current_shanghai.date()
+            yesterday = today - timedelta(days=1)
+
+            # Get data from yesterday 20:00 to today 15:30
+            start_time = f"{yesterday}T20:00:00+08:00"
+            end_time = f"{today}T15:30:00+08:00"
+
+            cursor = self.db_conn.cursor()
+            cursor.execute('''SELECT timestamp, price_cny FROM prices
+                             WHERE timestamp >= ? AND timestamp <= ?
+                             ORDER BY timestamp''', (start_time, end_time))
+
+            results = cursor.fetchall()
+
+            times = []
+            prices = []
+            for timestamp, price in results:
+                # Extract time part (HH:MM) from timestamp
+                time_part = timestamp.split('T')[1].split('+')[0][:5]
+                times.append(time_part)
+                prices.append(price)
+
+            return times, prices
+        except Exception as e:
+            logger.error(f"Failed to get chart data: {e}")
+            return [], []
+
     def update_plot(self, frame):
         with self.data_lock:
             if self.current_data is None:
                 return
-            data = self.current_data.copy()
             save_png = self.save_png_flag
             self.save_png_flag = False  # Reset flag
 
-        times = data['times']
-        prices = [float(p) for p in data['data']]
+        # Get all data from database instead of just current API response
+        times, prices = self.get_chart_data()
+
+        if not times:
+            return
         
         # Get current Shanghai time for display
         shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
         current_shanghai_time = datetime.now(shanghai_tz).strftime('%H:%M:%S')
 
-        filtered_prices = self.filter_repeated_prices(prices)
-        candle_times, cny_candles = self.create_candlesticks(times, filtered_prices)
+        candle_times, cny_candles = self.create_candlesticks(times, prices)
 
+        # Clear and redraw
         plt.clf()
         
         ax1 = plt.gca()
@@ -385,6 +425,12 @@ class ShanghaiMetalChart:
         self.add_trading_sessions(ax1, candle_times)
         self.setup_axis_limits(ax1, ax2, cny_candles)
         
+#       # Add 1-minute resolution line overlay (base coordinate system)
+#       x_coords = list(range(len(times)))
+#       ax1.plot(x_coords, prices, color='cyan', linewidth=1, alpha=0.7, zorder=3)
+#       self.add_trading_sessions(ax1, candle_times)
+#       self.setup_axis_limits(ax1, ax2, cny_candles)
+
         with self.exchange_rate_lock:
             current_rate = self.USD_CNY_RATE
 
@@ -406,21 +452,42 @@ class ShanghaiMetalChart:
             except Exception as e:
                 logger.error(f"Failed to save PNG: {e}")
 
-    def filter_repeated_prices(self, prices):
-        filtered_prices = prices.copy()
-        if len(prices) > 5:
-            last_original_price = prices[-1]
-            consecutive_count = 0
-            for i in range(len(prices) - 1, -1, -1):
-                if prices[i] == last_original_price:
-                    consecutive_count += 1
-                else:
-                    break
-            
-            if consecutive_count > 3:
-                for i in range(len(prices) - consecutive_count, len(prices)):
-                    filtered_prices[i] = np.nan
-        return filtered_prices
+        # Get current Shanghai time for display
+        shanghai_tz = pytz.timezone(self.SHANGHAI_TIMEZONE)
+        current_shanghai_time = datetime.now(shanghai_tz).strftime('%H:%M:%S')
+
+        candle_times, cny_candles = self.create_candlesticks(times, prices)
+
+    #   plt.clf()
+
+    #   ax1 = plt.gca()
+    #   ax2 = self.setup_axes(ax1)
+
+    #   self.plot_candlesticks(ax1, candle_times, cny_candles, color_up='lightgreen', color_down='lightcoral')
+    #   self.add_trading_sessions(ax1, candle_times)
+    #   self.setup_axis_limits(ax1, ax2, cny_candles)
+
+    #   with self.exchange_rate_lock:
+    #       current_rate = self.USD_CNY_RATE
+
+    #   max_cny, max_usd, max_time = self.calculate_max_values(cny_candles, candle_times)
+
+    #   plt.title(f'{self.CHART_TITLE} 5-Min Candlestick Chart -- Last updated: {current_shanghai_time} CST\nUSD/CNY: {current_rate}, ozt: {self.TROY_OUNCE_GRAMS}g -- High: ¥{max_cny:.{self.CNY_PRECISION}f} ${max_usd:.{self.USD_PRECISION}f} at {max_time}')
+    #   ax1.grid(True, alpha=0.3, axis='y')
+
+    #   self.setup_time_labels(ax1, candle_times)
+    #   plt.tight_layout()
+
+        # Save PNG from main thread when new data arrived
+    #   if save_png:
+    #       try:
+    #           with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as temp_file:
+    #               self.fig.savefig(temp_file.name, dpi=150, bbox_inches='tight')
+    #               temp_name = temp_file.name
+    #           os.rename(temp_name, self.CHART_EXPORT_FILENAME)
+    #       except Exception as e:
+    #           logger.error(f"Failed to save PNG: {e}")
+
 
     def setup_axes(self, ax1):
         ax1.set_ylabel(self.CNY_UNIT_LABEL, color='white')
@@ -451,6 +518,8 @@ class ShanghaiMetalChart:
             ax1.axvspan(day_start-0.5, day_end+0.5, alpha=0.1, color='orange')
 
     def setup_axis_limits(self, ax1, ax2, cny_candles):
+        # Show full timeline - don't restrict x-axis
+
         valid_cny_highs = [c[1] for c in cny_candles if not np.isnan(c[1])]
         valid_cny_lows = [c[2] for c in cny_candles if not np.isnan(c[2])]
         
@@ -494,10 +563,17 @@ class ShanghaiMetalChart:
         ax1.set_xticklabels([candle_times[i] for i in range(0, len(candle_times), step)])
 
     def signal_handler(self, signum, frame):
+        if hasattr(self, '_shutting_down'):
+            return  # Already shutting down
+        self._shutting_down = True
+
         logger.info(f"Received signal {signum}, shutting down gracefully...")
         self.shutdown_event.set()
         self.close_database()
-        plt.close('all')
+        try:
+            plt.close('all')
+        except:
+            pass
         sys.exit(0)
 
     def run(self):
