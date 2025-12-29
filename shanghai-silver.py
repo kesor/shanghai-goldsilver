@@ -320,17 +320,19 @@ def fetch_data_background():
             time.sleep(5)
 
 def create_candlesticks(times, prices):
-    """Convert 1-minute data to 5-minute candlesticks"""
+    """Convert 1-minute data to 5-minute candlesticks, including partial candles"""
     candles = []
     candle_times = []
     
-    for i in range(0, len(times), 5):
-        # Get 5-minute window
-        window_prices = prices[i:i+5]
-        window_times = times[i:i+5]
+    i = 0
+    while i < len(times):
+        # Get up to 5-minute window (or remaining data)
+        window_end = min(i + 5, len(times))
+        window_prices = prices[i:window_end]
+        window_times = times[i:window_end]
         
         if len(window_prices) == 0:
-            continue
+            break
             
         # Remove NaN values
         valid_prices = [p for p in window_prices if not np.isnan(p)]
@@ -338,16 +340,17 @@ def create_candlesticks(times, prices):
         if len(valid_prices) == 0:
             candles.append([np.nan, np.nan, np.nan, np.nan])
             candle_times.append(window_times[0])
-            continue
+        else:
+            # OHLC for this period (1-5 minutes)
+            open_price = valid_prices[0]
+            close_price = valid_prices[-1]
+            high_price = max(valid_prices)
+            low_price = min(valid_prices)
+            
+            candles.append([open_price, high_price, low_price, close_price])
+            candle_times.append(window_times[0])  # Use first timestamp of the period
         
-        # OHLC for this 5-minute period
-        open_price = valid_prices[0]
-        close_price = valid_prices[-1]
-        high_price = max(valid_prices)
-        low_price = min(valid_prices)
-        
-        candles.append([open_price, high_price, low_price, close_price])
-        candle_times.append(window_times[0])  # Use first timestamp of the period
+        i += 5  # Move to next 5-minute boundary
     
     return candle_times, candles
 
