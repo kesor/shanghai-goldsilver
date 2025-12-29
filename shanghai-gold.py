@@ -5,7 +5,7 @@ from shanghai_base import ShanghaiMetalChart
 config = {
     'usd_cny_rate': 7.0060,
     'troy_ounce_grams': 31.10348,
-    'update_interval': 300,
+    'update_interval': 60,
     'exchange_rate_update_interval': 3600,
     'shanghai_timezone': 'Asia/Shanghai',
     'animation_interval': 250,
