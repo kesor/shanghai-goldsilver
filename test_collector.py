@@ -1,24 +1,19 @@
-import pytest
-from datetime import datetime, time as dtime, timedelta
-import pytz  # type: ignore
-from collector import (
-    trading_day_start_date_sh,
-    last_closed_minute_sh,
-    market_cutoff_sh,
-    parse_delaystr_sh,
-    parse_point_timestamp_iso,
-    can_make_fx_request,
-    inc_fx_request,
-    get_cached_fx,
-    fetch_sge,
-    Instrument,
-    SH_TZ,
-    FX_DEFAULT,
-)
+import os
 import sqlite3
 import tempfile
-import os
-from unittest.mock import patch, MagicMock
+from datetime import datetime
+from datetime import time as dtime
+from datetime import timedelta
+from unittest.mock import MagicMock, patch
+
+import pytest
+import pytz  # type: ignore
+
+from collector import (FX_DEFAULT, SH_TZ, Instrument, can_make_fx_request,
+                       fetch_sge, get_cached_fx, inc_fx_request,
+                       last_closed_minute_sh, market_cutoff_sh,
+                       parse_delaystr_sh, parse_point_timestamp_iso,
+                       trading_day_start_date_sh)
 
 
 class TestTradingDayLogic:

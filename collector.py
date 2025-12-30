@@ -6,9 +6,9 @@ import re
 import sqlite3
 import time
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import date, datetime
 from datetime import time as dtime
-from datetime import timedelta, timezone, date
+from datetime import timedelta, timezone
 
 import pytz  # type: ignore
 import requests

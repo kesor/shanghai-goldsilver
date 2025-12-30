@@ -5,8 +5,8 @@ import sqlite3
 import threading
 from dataclasses import dataclass
 from http.server import HTTPServer, SimpleHTTPRequestHandler
-
 from typing import Any, Dict
+
 import websockets
 import websockets.server
 

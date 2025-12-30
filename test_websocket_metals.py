@@ -1,10 +1,12 @@
-import pytest
 import asyncio
 import json
+import os
 import sqlite3
 import tempfile
-import os
-from unittest.mock import patch, MagicMock
+from unittest.mock import MagicMock, patch
+
+import pytest
+
 from websocket_metals import DataServer, WSConfig
 
 
