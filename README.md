@@ -2,6 +2,8 @@
 
 Real-time charting application for Shanghai Gold Exchange (SGE) precious metals prices with live WebSocket updates and interactive candlestick charts.
 
+![Shanghai Gold & Silver Charts](screenshot.png)
+
 ## Features
 
 - **Real-time Data**: Fetches Au(T+D) and Ag(T+D) prices from Shanghai Gold Exchange
