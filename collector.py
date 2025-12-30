@@ -8,9 +8,9 @@ import time
 from dataclasses import dataclass
 from datetime import datetime
 from datetime import time as dtime
-from datetime import timedelta, timezone
+from datetime import timedelta, timezone, date
 
-import pytz
+import pytz  # type: ignore
 import requests
 
 LOG = logging.getLogger("collector")
@@ -51,7 +51,7 @@ def http_headers():
     }
 
 
-def trading_day_start_date_sh(now_sh: datetime) -> datetime.date:
+def trading_day_start_date_sh(now_sh: datetime) -> date:
     """Get the trading day start date (20:00 Shanghai time marks new trading day)."""
     # trading day starts at 20:00 Shanghai wall time
     if now_sh.time() >= dtime(20, 0):
@@ -73,9 +73,10 @@ def market_cutoff_sh(now_sh: datetime) -> datetime:
     td0 = trading_day_start_date_sh(now_sh)
 
     night_start = SH_TZ.localize(datetime.combine(td0, dtime(20, 0)))
-    night_end = SH_TZ.localize(datetime.combine(td0 + timedelta(days=1), dtime(2, 30)))
-    day_start = SH_TZ.localize(datetime.combine(td0 + timedelta(days=1), dtime(9, 0)))
-    day_end = SH_TZ.localize(datetime.combine(td0 + timedelta(days=1), dtime(15, 30)))
+    next_day = td0 + timedelta(days=1)
+    night_end = SH_TZ.localize(datetime.combine(next_day, dtime(2, 30)))
+    day_start = SH_TZ.localize(datetime.combine(next_day, dtime(9, 0)))
+    day_end = SH_TZ.localize(datetime.combine(next_day, dtime(15, 30)))
 
     if night_start <= now_sh <= night_end:
         return last_closed_minute_sh(now_sh)

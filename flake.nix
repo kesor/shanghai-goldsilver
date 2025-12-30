@@ -32,6 +32,8 @@
         ps.pytest
         ps.pytest-cov
         ps.pytest-asyncio
+        # Type stubs
+        ps.types-requests
       ]);
     in
     {

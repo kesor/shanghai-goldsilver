@@ -6,7 +6,9 @@ import threading
 from dataclasses import dataclass
 from http.server import HTTPServer, SimpleHTTPRequestHandler
 
+from typing import Any, Dict
 import websockets
+import websockets.server
 
 
 @dataclass(frozen=True)
@@ -22,7 +24,7 @@ class WSConfig:
 class DataServer:
     def __init__(self, cfg: WSConfig):
         self.cfg = cfg
-        self.clients: set[websockets.WebSocketServerProtocol] = set()
+        self.clients: set[Any] = set()
         self.last_payload: str | None = None
 
     async def register(self, ws):
@@ -36,7 +38,7 @@ class DataServer:
 
     def _fetch_payload(self) -> str:
         """Return JSON string: { gold: [...], silver: [...] }"""
-        out = {"gold": [], "silver": []}
+        out: Dict[str, list] = {"gold": [], "silver": []}
 
         try:
             conn = sqlite3.connect(self.cfg.db_path)

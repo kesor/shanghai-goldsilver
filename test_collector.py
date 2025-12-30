@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime, time as dtime, timedelta
-import pytz
+import pytz  # type: ignore
 from collector import (
     trading_day_start_date_sh,
     last_closed_minute_sh,
