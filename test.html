@@ -1,0 +1,114 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>JavaScript Tests</title>
+    <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        .test-result { margin: 5px 0; }
+        .pass { color: green; }
+        .fail { color: red; }
+    </style>
+</head>
+<body>
+    <h1>JavaScript Business Logic Tests</h1>
+    <div id="results"></div>
+
+    <script type="module">
+        import { createOHLC } from './candles.js';
+        import { shanghaiMidnightUtcMs, shanghaiHM, shanghaiTimeUtcMs } from './time_shanghai.js';
+        import { fmtTickShanghai } from './axis_fmt.js';
+
+        const results = document.getElementById('results');
+
+        function test(name, fn) {
+            try {
+                fn();
+                results.innerHTML += `<div class="test-result pass">✓ ${name}</div>`;
+            } catch (e) {
+                results.innerHTML += `<div class="test-result fail">✗ ${name}: ${e.message}</div>`;
+            }
+        }
+
+        function assert(condition, message = 'Assertion failed') {
+            if (!condition) throw new Error(message);
+        }
+
+        // Test createOHLC
+        test('createOHLC with empty data', () => {
+            const result = createOHLC([]);
+            assert(result.length === 0, 'Should return empty array');
+        });
+
+        test('createOHLC with null data', () => {
+            const result = createOHLC(null);
+            assert(result.length === 0, 'Should return empty array for null');
+        });
+
+        test('createOHLC with single point', () => {
+            const data = [{
+                timestamp: "2021-12-31T14:30:00+08:00",
+                price_cny: 500.0,
+                usd_cny_rate: 7.0
+            }];
+            
+            // Mock Date.now to be after our test data
+            const originalNow = Date.now;
+            Date.now = () => 1640995200000; // 2022-01-01 00:00:00 UTC
+            
+            const result = createOHLC(data);
+            
+            Date.now = originalNow; // Restore
+            
+            assert(result.length === 1, 'Should create one candle');
+            assert(result[0].open === 500.0, 'Open should be 500.0');
+            assert(result[0].close === 500.0, 'Close should be 500.0');
+            assert(result[0].high === 500.0, 'High should be 500.0');
+            assert(result[0].low === 500.0, 'Low should be 500.0');
+        });
+
+        // Test Shanghai time utilities
+        test('shanghaiMidnightUtcMs', () => {
+            const utcMs = 1640995200000; // 2022-01-01 00:00:00 UTC (08:00 Shanghai)
+            const result = shanghaiMidnightUtcMs(utcMs);
+            const expected = 1640966400000; // 2021-12-31 16:00:00 UTC (00:00 Shanghai)
+            assert(result === expected, `Expected ${expected}, got ${result}`);
+        });
+
+        test('shanghaiHM', () => {
+            const utcMs = 1640995200000; // 2022-01-01 00:00:00 UTC (08:00 Shanghai)
+            const result = shanghaiHM(utcMs);
+            assert(result.h === 8, `Expected hour 8, got ${result.h}`);
+            assert(result.m === 0, `Expected minute 0, got ${result.m}`);
+        });
+
+        test('shanghaiTimeUtcMs', () => {
+            const day0Utc = 1640966400000; // 2021-12-31 16:00:00 UTC (00:00 Shanghai)
+            const result = shanghaiTimeUtcMs(day0Utc, 14, 30);
+            const expected = day0Utc + (14 * 60 + 30) * 60 * 1000;
+            assert(result === expected, `Expected ${expected}, got ${result}`);
+        });
+
+        // Test axis formatting
+        test('fmtTickShanghai', () => {
+            const date = new Date(1640995200000); // 2022-01-01 00:00:00 UTC
+            const result = fmtTickShanghai(date);
+            assert(result === "08:00", `Expected "08:00", got "${result}"`);
+        });
+
+        // Test invalid inputs
+        test('createOHLC with invalid timestamp', () => {
+            const data = [{timestamp: "invalid", price_cny: 500.0, usd_cny_rate: 7.0}];
+            const result = createOHLC(data);
+            assert(result.length === 0, 'Should filter out invalid timestamps');
+        });
+
+        test('createOHLC with invalid price', () => {
+            const data = [{timestamp: "2021-12-31T14:30:00+08:00", price_cny: "invalid", usd_cny_rate: 7.0}];
+            const result = createOHLC(data);
+            assert(result.length === 0, 'Should filter out invalid prices');
+        });
+
+        results.innerHTML += '<div style="margin-top: 20px; font-weight: bold;">Tests completed!</div>';
+    </script>
+</body>
+</html>

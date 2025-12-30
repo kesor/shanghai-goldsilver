@@ -28,6 +28,10 @@
         ps.isort
         ps.flake8
         ps.mypy
+        # Testing
+        ps.pytest
+        ps.pytest-cov
+        ps.pytest-asyncio
       ]);
     in
     {
@@ -61,6 +65,10 @@
           echo ""
           echo "Type checking:"
           echo "  mypy *.py                   # Type check Python"
+          echo ""
+          echo "Testing:"
+          echo "  pytest                      # Run tests"
+          echo "  pytest --cov=. --cov-report=html # Run tests with coverage"
         '';
       };
     };
