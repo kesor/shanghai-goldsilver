@@ -14,13 +14,3 @@ export function shanghaiHM(msUtc) {
 export function shanghaiTimeUtcMs(day0UtcMs, hh, mm) {
   return day0UtcMs + (hh * 60 + mm) * MINUTE_MS;
 }
-
-export function isShanghaiInDaySession(msUtc) {
-  const { h, m } = shanghaiHM(msUtc);
-  return (h > 9 || (h === 9 && m >= 0)) && (h < 15 || (h === 15 && m <= 30));
-}
-
-export function isShanghaiInNightSession(msUtc) {
-  const { h, m } = shanghaiHM(msUtc);
-  return h >= 20 || h < 2 || (h === 2 && m <= 30);
-}

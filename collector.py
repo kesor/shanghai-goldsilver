@@ -88,38 +88,6 @@ def market_cutoff_sh(now_sh: datetime) -> datetime:
     return day_end
 
 
-def trim_spoofed_tail(times, prices, session_min, cutoff_sh):
-    """
-    Remove trailing prices == session_min only for points whose HH:MM is after cutoff_sh
-    (minute resolution). Keeps legitimate 'min' prints earlier.
-    """
-    if session_min is None or not times:
-        return times, prices
-
-    cutoff_floor = cutoff_sh.replace(second=0, microsecond=0)
-    td0 = trading_day_start_date_sh(cutoff_floor)
-
-    def point_sh(hhmm: str) -> datetime | None:
-        try:
-            hh, mm = map(int, hhmm.split(":"))
-        except Exception:
-            return None
-        point_date = td0 if hh >= 20 else (td0 + timedelta(days=1))
-        return SH_TZ.localize(datetime.combine(point_date, dtime(hh, mm)))
-
-    i = len(times) - 1
-    while i >= 0:
-        t = point_sh(times[i])
-        if t is None:
-            break
-        if t <= cutoff_floor:
-            break
-        if prices[i] != session_min:
-            break
-        i -= 1
-
-    return times[: i + 1], prices[: i + 1]
-
 
 def parse_delaystr_sh(delaystr: str | None) -> datetime | None:
     if not delaystr:

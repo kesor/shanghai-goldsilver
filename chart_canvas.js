@@ -87,7 +87,7 @@ export class CandleChart {
 
     // title uses the window, but stats use visible data if present
     const fx = visible.length ? visible[visible.length - 1].fx_close : NaN;
-    this.#setTitle(container, this.#buildTitle(visible, fx, domMin, domMax));
+    this.#setTitle(container, this.#buildTitle(visible, fx));
 
     // still render axes/sessions even if no points in the window
     const y = this.#buildY(visible, plot);
@@ -121,7 +121,7 @@ export class CandleChart {
     container.appendChild(h2);
   }
 
-  #buildTitle(visible, fxCnyPerUsd, domMin, domMax) {
+  #buildTitle(visible, fxCnyPerUsd) {
     const base = this.title ?? "";
 
     if (!visible?.length) return base;

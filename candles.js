@@ -21,8 +21,7 @@ export function createOHLC(data, intervalMin = 5) {
       const t = new Date(d.timestamp);
       const price = +d.price_cny;
       const rate = +d.usd_cny_rate;
-      const usd_price = rate > 0 ? price / rate : NaN;
-      return { t, price, usd_price, rate };
+      return { t, price, rate };
     })
     .filter((d) => !Number.isNaN(d.t.getTime()) && Number.isFinite(d.price))
     .filter((d) => d.t.getTime() + SHANGHAI_OFFSET_MS <= nowShanghaiMs)
@@ -32,24 +31,15 @@ export function createOHLC(data, intervalMin = 5) {
   );
 
   return Array.from(grouped, ([bucketMs, values]) => {
-    const cny = values.map((v) => v.price);
-    const usd = values.map((v) => v.usd_price).filter(Number.isFinite);
-
     return {
       date: new Date(bucketMs),
 
       open: values[0].price,
       close: values[values.length - 1].price,
-      high: d3.max(cny),
-      low: d3.min(cny),
-
-      usd_open: values[0].usd_price,
-      usd_close: values[values.length - 1].usd_price,
-      usd_high: usd.length ? d3.max(usd) : NaN,
-      usd_low: usd.length ? d3.min(usd) : NaN,
+      high: d3.max(values, (v) => v.price),
+      low: d3.min(values, (v) => v.price),
 
       fx_close: values[values.length - 1].rate, // useful for right labels
-      count: values.length,
     };
   }).sort((a, b) => a.date - b.date);
 }
