@@ -49,6 +49,7 @@
         buildInputs = [ 
           pythonDevEnv
           pkgs.nodePackages.prettier  # JS/HTML formatter
+          pkgs.nodejs_latest  # Node.js for testing JavaScript
         ];
         shellHook = ''
           echo "Shanghai Gold & Silver Charts Development Environment"
@@ -69,6 +70,7 @@
           echo "Testing:"
           echo "  pytest                      # Run tests"
           echo "  pytest --cov=. --cov-report=html # Run tests with coverage"
+          echo "  node test_js.mjs            # Run JavaScript tests"
         '';
       };
     };
