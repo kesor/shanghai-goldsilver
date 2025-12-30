@@ -52,6 +52,7 @@
           pythonDevEnv
           pkgs.nodePackages.prettier  # JS/HTML formatter
           pkgs.nodejs_latest  # Node.js for testing JavaScript
+          pkgs.sqlite
         ];
         shellHook = ''
           echo "Shanghai Gold & Silver Charts Development Environment"
