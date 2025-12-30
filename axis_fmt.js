@@ -1,6 +1,7 @@
 import { SHANGHAI_OFFSET_MS } from "./consts.js";
 
 export function fmtTickShanghai(date) {
+  // Format date as HH:MM in Shanghai timezone
   const ms = date.getTime() + SHANGHAI_OFFSET_MS;
   const d = new Date(ms);
   const hh = String(d.getUTCHours()).padStart(2, "0");

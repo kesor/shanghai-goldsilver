@@ -2,6 +2,7 @@ import { shanghaiMidnightUtcMs } from "./time_shanghai.js";
 import { MINUTE_MS, DAY_MS } from "./consts.js";
 
 export function drawShanghaiSessions(ctx, x, plot, fills) {
+  // Draw trading session background shading
   const [t0Date, t1Date] = x.domain();
   const t0 = t0Date.getTime();
   const t1 = t1Date.getTime();
@@ -36,6 +37,7 @@ export function drawShanghaiSessions(ctx, x, plot, fills) {
 }
 
 function fillInterval(ctx, x, plot, t0, t1, aMs, bMs, fill) {
+  // Fill time interval with given color if it intersects the visible range
   const A = Math.max(aMs, t0);
   const B = Math.min(bMs, t1);
   if (B <= A) return;

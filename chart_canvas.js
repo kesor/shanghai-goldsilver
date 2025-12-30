@@ -43,11 +43,13 @@ export class CandleChart {
   }
 
   setTitle(title) {
+    // Set chart title and return this for chaining
     this.title = title;
     return this;
   }
 
   render(ohlc) {
+    // Render candlestick chart with given OHLC data
     const container = document.getElementById(this.containerId);
     if (!container) return this;
 
@@ -114,6 +116,7 @@ export class CandleChart {
   // ------------------------
 
   #setTitle(container, text) {
+    // Create and append title element to container
     const h2 = document.createElement("h2");
     h2.style.color = "white";
     h2.style.margin = "0 0 10px 0";
@@ -122,6 +125,7 @@ export class CandleChart {
   }
 
   #buildTitle(visible, fxCnyPerUsd) {
+    // Build chart title with price stats and FX rate
     const base = this.title ?? "";
 
     if (!visible?.length) return base;
@@ -172,6 +176,7 @@ export class CandleChart {
   // ------------------------
 
   #buildX(width) {
+    // Build X scale for time axis with session windowing
     const m = this.margin;
     const W = this.window;
 
@@ -229,6 +234,7 @@ export class CandleChart {
   }
 
   #buildY(visible, plot) {
+    // Build Y scale for price axis with padding
     // if empty, pick a dummy domain to keep axes stable
     let yMin = 0;
     let yMax = 1;
@@ -253,6 +259,7 @@ export class CandleChart {
   // ------------------------
 
   #ensureCanvas(container, width, height) {
+    // Create or reuse canvas element and set up 2D context
     const existing = container.querySelector("canvas");
     if (existing) {
       this.canvas = existing;
@@ -271,6 +278,7 @@ export class CandleChart {
   }
 
   #clipPlot(plot) {
+    // Set clipping region to plot area
     const ctx = this.ctx;
     ctx.save();
     ctx.beginPath();
@@ -279,6 +287,7 @@ export class CandleChart {
   }
 
   #unclip() {
+    // Restore canvas context (remove clipping)
     this.ctx.restore();
   }
 
@@ -287,6 +296,7 @@ export class CandleChart {
   // ------------------------
 
   #drawGrid(ctx, plot, y) {
+    // Draw horizontal grid lines
     ctx.lineWidth = 0.5;
     ctx.strokeStyle = "#333";
 
@@ -302,6 +312,7 @@ export class CandleChart {
   }
 
   #drawAxes(ctx, plot, x, y, fxCnyPerUsd) {
+    // Draw X and Y axes with tick labels
     ctx.lineWidth = 1;
     ctx.strokeStyle = "white";
     ctx.fillStyle = "white";
@@ -373,6 +384,7 @@ export class CandleChart {
   }
 
   #drawCandles(ctx, plot, x, y, ohlc) {
+    // Draw candlestick chart with dynamic width calculation
     let w = 3;
     if (ohlc.length >= 2) {
       let minDx = Infinity;
@@ -412,6 +424,7 @@ export class CandleChart {
   // ------------------------
 
   #cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
+    // Convert CNY price to USD per troy ounce
     if (
       !Number.isFinite(cnyTick) ||
       !Number.isFinite(fxCnyPerUsd) ||

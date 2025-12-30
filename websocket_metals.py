@@ -26,10 +26,12 @@ class DataServer:
         self.last_payload: str | None = None
 
     async def register(self, ws):
+        """Register new WebSocket client and send initial data."""
         self.clients.add(ws)
         await ws.send(self._fetch_payload())
 
     async def unregister(self, ws):
+        """Remove WebSocket client from active clients set."""
         self.clients.discard(ws)
 
     def _fetch_payload(self) -> str:
@@ -69,6 +71,7 @@ class DataServer:
         return json.dumps(out, separators=(",", ":"), ensure_ascii=False)
 
     async def broadcast_updates(self):
+        """Continuously fetch data and broadcast updates to connected clients."""
         while True:
             payload = self._fetch_payload()
 
@@ -88,6 +91,7 @@ class DataServer:
             await asyncio.sleep(self.cfg.poll_sec)
 
     async def handle_client(self, ws):
+        """Handle WebSocket client connection lifecycle."""
         await self.register(ws)
         try:
             await ws.wait_closed()
@@ -96,10 +100,12 @@ class DataServer:
 
 
 def start_http_server(port: int):
+    """Start HTTP server for serving static files."""
     HTTPServer(("localhost", port), SimpleHTTPRequestHandler).serve_forever()
 
 
 async def main():
+    """Start WebSocket server and HTTP server for the metals data service."""
     cfg = WSConfig()
     srv = DataServer(cfg)
 

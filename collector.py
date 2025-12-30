@@ -40,6 +40,7 @@ INSTRUMENTS = [
 
 
 def http_headers():
+    """Return HTTP headers for SGE API requests."""
     return {
         "Accept": "application/json, text/javascript, */*; q=0.01",
         "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
@@ -51,6 +52,7 @@ def http_headers():
 
 
 def trading_day_start_date_sh(now_sh: datetime) -> datetime.date:
+    """Get the trading day start date (20:00 Shanghai time marks new trading day)."""
     # trading day starts at 20:00 Shanghai wall time
     if now_sh.time() >= dtime(20, 0):
         return now_sh.date()
@@ -58,7 +60,7 @@ def trading_day_start_date_sh(now_sh: datetime) -> datetime.date:
 
 
 def last_closed_minute_sh(now_sh: datetime) -> datetime:
-    # Drop seconds/micros, then step back one full minute.
+    """Drop seconds/micros, then step back one full minute."""
     return now_sh.replace(second=0, microsecond=0) - timedelta(minutes=1)
 
 
@@ -88,8 +90,8 @@ def market_cutoff_sh(now_sh: datetime) -> datetime:
     return day_end
 
 
-
 def parse_delaystr_sh(delaystr: str | None) -> datetime | None:
+    """Parse SGE delay string to Shanghai timezone datetime."""
     if not delaystr:
         return None
     m = _DELAY_RE.match(delaystr)
@@ -101,10 +103,7 @@ def parse_delaystr_sh(delaystr: str | None) -> datetime | None:
 
 
 def parse_point_timestamp_iso(time_hhmm: str, cutoff_sh: datetime) -> str | None:
-    """
-    Convert HH:MM to ISO8601 (+08:00) using SGE trading-day anchoring.
-    Skip if point is after cutoff_sh.
-    """
+    """Convert HH:MM to ISO8601 (+08:00) using SGE trading-day anchoring."""
     try:
         hh, mm = map(int, time_hhmm.split(":"))
     except Exception:
@@ -125,6 +124,7 @@ def parse_point_timestamp_iso(time_hhmm: str, cutoff_sh: datetime) -> str | None
 
 
 def fetch_sge(inst: Instrument) -> tuple[list[str], list[float], dict]:
+    """Fetch price data from SGE API for given instrument."""
     resp = requests.post(
         SGE_URL,
         headers=http_headers(),
@@ -154,6 +154,7 @@ def fetch_sge(inst: Instrument) -> tuple[list[str], list[float], dict]:
 
 
 def can_make_fx_request(conn: sqlite3.Connection) -> bool:
+    """Check if we can make another Alpha Vantage API request today."""
     try:
         today = datetime.now(timezone.utc).date().isoformat()
         row = conn.execute(
@@ -167,6 +168,7 @@ def can_make_fx_request(conn: sqlite3.Connection) -> bool:
 
 
 def inc_fx_request(conn: sqlite3.Connection) -> None:
+    """Increment the Alpha Vantage API request count for today."""
     today = datetime.now(timezone.utc).date().isoformat()
     conn.execute(
         "INSERT OR IGNORE INTO api_requests(date, alpha_vantage_count) VALUES(?, 0)",
@@ -181,6 +183,7 @@ def inc_fx_request(conn: sqlite3.Connection) -> None:
 
 
 def get_cached_fx(conn: sqlite3.Connection) -> float:
+    """Get the most recent USD/CNY exchange rate from database."""
     row = conn.execute(
         "SELECT usd_cny_rate FROM prices WHERE usd_cny_rate IS NOT NULL "
         "ORDER BY timestamp DESC LIMIT 1"
@@ -189,6 +192,7 @@ def get_cached_fx(conn: sqlite3.Connection) -> float:
 
 
 def fetch_fx(conn: sqlite3.Connection, current_fx: float) -> float:
+    """Fetch USD/CNY exchange rate from Alpha Vantage API with fallback to cached rate."""
     api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
     if not api_key:
         return get_cached_fx(conn)
@@ -225,6 +229,7 @@ def fetch_fx(conn: sqlite3.Connection, current_fx: float) -> float:
 
 
 def init_db(path: str) -> sqlite3.Connection:
+    """Initialize SQLite database with required tables."""
     conn = sqlite3.connect(path)
     conn.execute(
         """
@@ -257,6 +262,7 @@ def store_points(
     times: list[str],
     prices: list[float],
 ) -> int:
+    """Store price points in database, returning count of inserted records."""
     n = 0
     cur = conn.cursor()
 
@@ -284,6 +290,7 @@ def store_points(
 
 
 def main():
+    """Main collector loop - fetches SGE prices and stores in database."""
     logging.basicConfig(
         level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s"
     )

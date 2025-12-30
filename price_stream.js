@@ -6,16 +6,19 @@ export class PriceStream {
   }
 
   on(key, handler) {
+    // Register event handler for given key
     this.handlers.set(key, handler);
     return this;
   }
 
   off(key) {
+    // Remove event handler for given key
     this.handlers.delete(key);
     return this;
   }
 
   connect() {
+    // Connect to WebSocket server and set up event handlers
     if (this.ws) return;
 
     this.ws = new WebSocket(this.url);
@@ -54,6 +57,7 @@ export class PriceStream {
   }
 
   close() {
+    // Close WebSocket connection
     if (this.ws) {
       this.ws.close();
       this.ws = null;

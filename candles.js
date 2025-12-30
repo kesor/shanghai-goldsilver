@@ -2,7 +2,7 @@ import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 import { SHANGHAI_OFFSET_MS } from "./consts.js";
 
 function floorToIntervalShanghai(ms, intervalMs) {
-  // align buckets to Shanghai wall-clock boundaries
+  // Align buckets to Shanghai wall-clock boundaries
   return (
     Math.floor((ms + SHANGHAI_OFFSET_MS) / intervalMs) * intervalMs -
     SHANGHAI_OFFSET_MS
@@ -10,6 +10,7 @@ function floorToIntervalShanghai(ms, intervalMs) {
 }
 
 export function createOHLC(data, intervalMin = 5) {
+  // Convert tick data to OHLC candlesticks with 5-minute intervals
   if (!data?.length) return [];
 
   const nowMs = Date.now(); // absolute instant now
