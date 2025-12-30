@@ -262,14 +262,24 @@ def store_points(
     fx: float,
     times: list[str],
     prices: list[float],
+    meta: dict,
 ) -> int:
     """Store price points in database, returning count of inserted records."""
     n = 0
     cur = conn.cursor()
+    
+    min_price = meta.get("min")
+    max_price = meta.get("max")
 
     try:
         for t_hhmm, price in zip(times, prices):
             if price != price:  # NaN
+                continue
+                
+            # Filter out prices outside meta min/max range
+            if min_price is not None and price < float(min_price):
+                continue
+            if max_price is not None and price > float(max_price):
                 continue
 
             ts = parse_point_timestamp_iso(t_hhmm, cutoff_sh)
@@ -328,7 +338,7 @@ def main():
                 if api_sh:
                     cutoff_sh = min(cutoff_sh, api_sh)
 
-                wrote = store_points(conn, inst.metal, cutoff_sh, fx, times, prices)
+                wrote = store_points(conn, inst.metal, cutoff_sh, fx, times, prices, meta)
                 total += wrote
 
                 LOG.info(
