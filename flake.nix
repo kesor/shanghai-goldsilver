@@ -12,9 +12,10 @@
       pkgs = nixpkgs.legacyPackages.${system};
       pythonEnv = pkgs.python3.withPackages (ps: [
         ps.matplotlib
-        ps.requests
-        ps.pytz
         ps.pandas
+        ps.pytz
+        ps.requests
+        ps.websockets
       ]);
     in
     {
