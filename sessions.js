@@ -1,5 +1,5 @@
 import { shanghaiMidnightUtcMs } from "./time_shanghai.js";
-import { MINUTE_MS, DAY_MS } from "./consts.js"
+import { MINUTE_MS, DAY_MS } from "./consts.js";
 
 export function drawShanghaiSessions(ctx, x, plot, fills) {
   const [t0Date, t1Date] = x.domain();
@@ -10,17 +10,27 @@ export function drawShanghaiSessions(ctx, x, plot, fills) {
 
   for (let day0 = firstDay0; day0 <= t1; day0 += DAY_MS) {
     // Night: 20:00 -> next day 02:30
-    fillInterval(ctx, x, plot, t0, t1,
-      day0 + (20 * 60) * MINUTE_MS,
+    fillInterval(
+      ctx,
+      x,
+      plot,
+      t0,
+      t1,
+      day0 + 20 * 60 * MINUTE_MS,
       day0 + DAY_MS + (2 * 60 + 30) * MINUTE_MS,
-      fills.night
+      fills.night,
     );
 
     // Day: 09:00 -> 15:30
-    fillInterval(ctx, x, plot, t0, t1,
-      day0 + (9 * 60) * MINUTE_MS,
+    fillInterval(
+      ctx,
+      x,
+      plot,
+      t0,
+      t1,
+      day0 + 9 * 60 * MINUTE_MS,
       day0 + (15 * 60 + 30) * MINUTE_MS,
-      fills.day
+      fills.day,
     );
   }
 }
@@ -36,4 +46,3 @@ function fillInterval(ctx, x, plot, t0, t1, aMs, bMs, fill) {
   ctx.fillStyle = fill;
   ctx.fillRect(x0, plot.top, Math.max(0, x1 - x0), plot.h);
 }
-

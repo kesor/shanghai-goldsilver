@@ -1,4 +1,4 @@
-import { MINUTE_MS, DAY_MS, SHANGHAI_OFFSET_MS } from "./consts.js"
+import { MINUTE_MS, DAY_MS, SHANGHAI_OFFSET_MS } from "./consts.js";
 
 export function shanghaiMidnightUtcMs(msUtc) {
   const sh = msUtc + SHANGHAI_OFFSET_MS;
@@ -22,6 +22,5 @@ export function isShanghaiInDaySession(msUtc) {
 
 export function isShanghaiInNightSession(msUtc) {
   const { h, m } = shanghaiHM(msUtc);
-  return (h >= 20) || (h < 2) || (h === 2 && m <= 30);
+  return h >= 20 || h < 2 || (h === 2 && m <= 30);
 }
-

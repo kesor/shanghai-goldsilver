@@ -1,36 +1,39 @@
 import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
-import { SHANGHAI_OFFSET_MS } from "./consts.js"
+import { SHANGHAI_OFFSET_MS } from "./consts.js";
 
 function floorToIntervalShanghai(ms, intervalMs) {
   // align buckets to Shanghai wall-clock boundaries
-  return Math.floor((ms + SHANGHAI_OFFSET_MS) / intervalMs) * intervalMs - SHANGHAI_OFFSET_MS;
+  return (
+    Math.floor((ms + SHANGHAI_OFFSET_MS) / intervalMs) * intervalMs -
+    SHANGHAI_OFFSET_MS
+  );
 }
 
 export function createOHLC(data, intervalMin = 5) {
   if (!data?.length) return [];
 
-  const nowMs = Date.now();                 // absolute instant now
+  const nowMs = Date.now(); // absolute instant now
   const nowShanghaiMs = nowMs + SHANGHAI_OFFSET_MS;
   const intervalMs = intervalMin * 60_000;
 
   const rows = data
-    .map(d => {
+    .map((d) => {
       const t = new Date(d.timestamp);
       const price = +d.price_cny;
       const rate = +d.usd_cny_rate;
       const usd_price = rate > 0 ? price / rate : NaN;
       return { t, price, usd_price, rate };
     })
-    .filter(d => !Number.isNaN(d.t.getTime()) && Number.isFinite(d.price))
-    .filter(d => (d.t.getTime() + SHANGHAI_OFFSET_MS) <= nowShanghaiMs)
-    .sort((a, b) => a.t - b.t)
-    ;
-
-  const grouped = d3.group(rows, d => floorToIntervalShanghai(d.t.getTime(), intervalMs));
+    .filter((d) => !Number.isNaN(d.t.getTime()) && Number.isFinite(d.price))
+    .filter((d) => d.t.getTime() + SHANGHAI_OFFSET_MS <= nowShanghaiMs)
+    .sort((a, b) => a.t - b.t);
+  const grouped = d3.group(rows, (d) =>
+    floorToIntervalShanghai(d.t.getTime(), intervalMs),
+  );
 
   return Array.from(grouped, ([bucketMs, values]) => {
-    const cny = values.map(v => v.price);
-    const usd = values.map(v => v.usd_price).filter(Number.isFinite);
+    const cny = values.map((v) => v.price);
+    const usd = values.map((v) => v.usd_price).filter(Number.isFinite);
 
     return {
       date: new Date(bucketMs),

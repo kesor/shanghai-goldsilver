@@ -10,7 +10,7 @@ export class CandleChart {
 
     this.title = opts.title ?? "";
     this.metal = opts.metal ?? "gold"; // "gold" | "silver"
-    this.unit = opts.unit ?? "CNY/g";  // "CNY/g" | "CNY/kg"
+    this.unit = opts.unit ?? "CNY/g"; // "CNY/g" | "CNY/kg"
 
     this.margin = opts.margin ?? { top: 20, right: 120, bottom: 30, left: 90 };
 
@@ -21,8 +21,8 @@ export class CandleChart {
 
     this.window = opts.window ?? {
       sessions: 2,
-      day:   { start: [9, 0],  end: [15, 30], padLeftH: 1, padRightH: 1 }, // 08:00..16:30
-      night: { start: [20, 0], end: [2, 30],  padLeftH: 1, padRightH: 1 }, // 19:00..03:30
+      day: { start: [9, 0], end: [15, 30], padLeftH: 1, padRightH: 1 }, // 08:00..16:30
+      night: { start: [20, 0], end: [2, 30], padLeftH: 1, padRightH: 1 }, // 19:00..03:30
     };
 
     // title stats
@@ -30,8 +30,8 @@ export class CandleChart {
       showFx: true,
       showHiLo: true,
       showLast: true,
-      cnyDigits: (this.unit === "CNY/g" ? 2 : 0),
-      usdDigits: (this.metal === "gold" ? 0 : 2),
+      cnyDigits: this.unit === "CNY/g" ? 2 : 0,
+      usdDigits: this.metal === "gold" ? 0 : 2,
     };
 
     // rendering
@@ -80,7 +80,7 @@ export class CandleChart {
     const domMin = d0.getTime();
     const domMax = d1.getTime();
 
-    const visible = ohlc.filter(d => {
+    const visible = ohlc.filter((d) => {
       const t = d.date.getTime();
       return t >= domMin && t <= domMax;
     });
@@ -129,14 +129,15 @@ export class CandleChart {
     const t = this.titleOpts;
     const parts = [base];
 
-    const hi = d3.max(visible, d => d.high);
-    const lo = d3.min(visible, d => d.low);
+    const hi = d3.max(visible, (d) => d.high);
+    const lo = d3.min(visible, (d) => d.low);
     const last = visible[visible.length - 1];
 
     if (t.showFx) {
-      const fxStr = Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0
-        ? fxCnyPerUsd.toFixed(4)
-        : "n/a";
+      const fxStr =
+        Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0
+          ? fxCnyPerUsd.toFixed(4)
+          : "n/a";
       parts.push(`FX ${fxStr}`);
     }
 
@@ -147,8 +148,12 @@ export class CandleChart {
       const hiUsd = this.#cnyTickToUsdOzt(hi, fxCnyPerUsd);
       const loUsd = this.#cnyTickToUsdOzt(lo, fxCnyPerUsd);
 
-      const hiUsdStr = Number.isFinite(hiUsd) ? `$${hiUsd.toFixed(usdDigits)}` : "—";
-      const loUsdStr = Number.isFinite(loUsd) ? `$${loUsd.toFixed(usdDigits)}` : "—";
+      const hiUsdStr = Number.isFinite(hiUsd)
+        ? `$${hiUsd.toFixed(usdDigits)}`
+        : "—";
+      const loUsdStr = Number.isFinite(loUsd)
+        ? `$${loUsd.toFixed(usdDigits)}`
+        : "—";
 
       parts.push(`Hi ¥${hi.toFixed(cnyDigits)} (${hiUsdStr})`);
       parts.push(`Lo ¥${lo.toFixed(cnyDigits)} (${loUsdStr})`);
@@ -210,14 +215,15 @@ export class CandleChart {
 
     candidates.sort((a, b) => a.coreStart - b.coreStart);
 
-    const started = candidates.filter(s => s.coreStart <= nowUtc);
+    const started = candidates.filter((s) => s.coreStart <= nowUtc);
     const picked = started.slice(-W.sessions);
     const sessions = picked.length ? picked : candidates.slice(-W.sessions);
 
-    const domMin = Math.min(...sessions.map(s => s.start));
-    const domMax = Math.max(...sessions.map(s => s.end));
+    const domMin = Math.min(...sessions.map((s) => s.start));
+    const domMax = Math.max(...sessions.map((s) => s.end));
 
-    return d3.scaleTime()
+    return d3
+      .scaleTime()
       .domain([new Date(domMin), new Date(domMax)])
       .range([m.left, width - m.right]);
   }
@@ -228,14 +234,15 @@ export class CandleChart {
     let yMax = 1;
 
     if (visible?.length) {
-      yMin = d3.min(visible, d => d.low);
-      yMax = d3.max(visible, d => d.high);
+      yMin = d3.min(visible, (d) => d.low);
+      yMax = d3.max(visible, (d) => d.high);
     }
 
     const span = Math.max(1e-9, yMax - yMin);
     const pad = Math.max(this.yPadMin, span * this.yPadPct);
 
-    return d3.scaleLinear()
+    return d3
+      .scaleLinear()
       .domain([yMin - pad, yMax + pad])
       .nice()
       .range([plot.bottom, plot.top]);
@@ -329,7 +336,7 @@ export class CandleChart {
     ctx.textAlign = "right";
     ctx.textBaseline = "middle";
 
-    const cnyDigits = (this.unit === "CNY/g") ? 2 : 0;
+    const cnyDigits = this.unit === "CNY/g" ? 2 : 0;
 
     for (const t of yt) {
       const yy = y(t);
@@ -350,7 +357,7 @@ export class CandleChart {
     ctx.textBaseline = "middle";
 
     const fxOk = Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0;
-    const usdDigits = (this.metal === "gold") ? 0 : 2;
+    const usdDigits = this.metal === "gold" ? 0 : 2;
 
     for (const t of yt) {
       const yy = y(t);
@@ -405,13 +412,17 @@ export class CandleChart {
   // ------------------------
 
   #cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
-    if (!Number.isFinite(cnyTick) || !Number.isFinite(fxCnyPerUsd) || fxCnyPerUsd <= 0) return NaN;
+    if (
+      !Number.isFinite(cnyTick) ||
+      !Number.isFinite(fxCnyPerUsd) ||
+      fxCnyPerUsd <= 0
+    )
+      return NaN;
 
     // normalize to CNY/gram
-    const cnyPerGram = (this.unit === "CNY/kg") ? (cnyTick / 1000.0) : cnyTick;
+    const cnyPerGram = this.unit === "CNY/kg" ? cnyTick / 1000.0 : cnyTick;
 
     // USD/ozt = (CNY/g * g/ozt) / (CNY/USD)
     return (cnyPerGram * OZT) / fxCnyPerUsd;
   }
 }
-
