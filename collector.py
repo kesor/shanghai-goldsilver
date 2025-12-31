@@ -2,6 +2,7 @@
 import json
 import logging
 import os
+import random
 import re
 import sqlite3
 import time
@@ -294,6 +295,7 @@ def store_points(
     n = 0
     nan_count = 0
     min_max_filtered = 0
+    skipped_future = 0
     latest_ts = None
 
     min_price = meta.get("min")
@@ -315,7 +317,23 @@ def store_points(
 
             ts = parse_point_timestamp_iso(t_hhmm, cutoff_sh)
             if not ts:
+                skipped_future += 1
                 continue
+
+            # Check for retroactive price revisions
+            cur.execute(
+                "SELECT price_cny FROM prices WHERE metal=? AND timestamp=?",
+                (metal, ts),
+            )
+            existing = cur.fetchone()
+            if existing and abs(float(price) - existing[0]) > 0.01:
+                LOG.info(
+                    "%s: revising previous price for %s from %.4f → %.4f",
+                    metal,
+                    ts,
+                    existing[0],
+                    price,
+                )
 
             # Log potential placeholder values near cutoff
             point_sh = datetime.fromisoformat(ts)
@@ -349,6 +367,12 @@ def store_points(
                 "%s: filtered %d values outside min/max bounds",
                 metal,
                 min_max_filtered,
+            )
+        if skipped_future > 0:
+            LOG.debug(
+                "%s: skipped %d future/provisional points",
+                metal,
+                skipped_future,
             )
 
         # Debug log for latest stored timestamp
@@ -455,8 +479,9 @@ def main():
             time.sleep(backoff)
             backoff = min(backoff * 2, 300.0)
 
-        # sleep to next minute-ish
-        time.sleep(FETCH_INTERVAL_SEC)
+        # sleep to next minute-ish with small random jitter
+        jitter = random.uniform(0, 10)  # 0-10 second jitter
+        time.sleep(FETCH_INTERVAL_SEC + jitter)
 
 
 if __name__ == "__main__":

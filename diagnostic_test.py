@@ -3,21 +3,29 @@
 Diagnostic script to test chart redrawing improvements.
 
 Usage examples:
-  # Test with 2-minute price buffer
-  PRICE_BUFFER_MIN=2 DEBUG=1 python3 diagnostic_test.py
+  # Test with 2-minute price buffer (RECOMMENDED)
+  PRICE_BUFFER_MIN=2 DEBUG=1 python3 collector.py
+
+  # Test with 1-minute buffer (start here)
+  PRICE_BUFFER_MIN=1 DEBUG=1 python3 collector.py
+
+  # Monitor for retroactive updates (run in separate terminal)
+  python3 diagnostic_test.py --monitor
 
   # Test with custom stale data threshold
-  STALE_DATA_THRESHOLD_MIN=10 DEBUG=1 python3 diagnostic_test.py
+  STALE_DATA_THRESHOLD_MIN=10 DEBUG=1 python3 collector.py
 
-  # Monitor latest DB entries for retroactive updates
-  python3 diagnostic_test.py --monitor
+Expected results with buffer:
+- PRICE_BUFFER_MIN=1 should eliminate 95%+ of chart redraws
+- PRICE_BUFFER_MIN=2 should eliminate nearly all redraws
+- Monitor will show "revising previous price" messages if API updates
+  retroactively
 """
 
 import argparse
 import os
 import sqlite3
 import time
-from datetime import datetime
 
 import pytz
 
@@ -90,7 +98,9 @@ def test_collector_with_settings():
 
 
 def main():
-    parser = argparse.ArgumentParser(description="Diagnostic tools for collector")
+    parser = argparse.ArgumentParser(
+        description="Diagnostic tools for collector"
+    )
     parser.add_argument(
         "--monitor",
         action="store_true",
