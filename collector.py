@@ -24,6 +24,8 @@ SH_TZ = pytz.timezone("Asia/Shanghai")
 FX_DEFAULT = 7.0060
 FETCH_INTERVAL_SEC = 60
 FX_REFRESH_SEC = 3600
+# Warn if API timestamp differs by more than 5 minutes
+STALE_DATA_THRESHOLD_MIN = 5
 
 
 @dataclass(frozen=True)
@@ -52,7 +54,7 @@ def http_headers():
 
 
 def trading_day_start_date_sh(now_sh: datetime) -> date:
-    """Get the trading day start date (20:00 Shanghai time marks new trading day)."""
+    """Get trading day start date (20:00 Shanghai time marks new day)."""
     # trading day starts at 20:00 Shanghai wall time
     if now_sh.time() >= dtime(20, 0):
         return now_sh.date()
@@ -78,13 +80,13 @@ def market_cutoff_sh(now_sh: datetime) -> datetime:
     day_start = SH_TZ.localize(datetime.combine(next_day, dtime(9, 0)))
     day_end = SH_TZ.localize(datetime.combine(next_day, dtime(15, 30)))
 
-    if night_start <= now_sh <= night_end:
+    if night_start < now_sh < night_end:
         return last_closed_minute_sh(now_sh)
 
     if night_end < now_sh < day_start:
         return night_end
 
-    if day_start <= now_sh <= day_end:
+    if day_start < now_sh < day_end:
         return last_closed_minute_sh(now_sh)
 
     # day_end < now_sh < next night_start
@@ -103,7 +105,9 @@ def parse_delaystr_sh(delaystr: str | None) -> datetime | None:
     return SH_TZ.localize(naive)
 
 
-def parse_point_timestamp_iso(time_hhmm: str, cutoff_sh: datetime) -> str | None:
+def parse_point_timestamp_iso(
+    time_hhmm: str, cutoff_sh: datetime
+) -> str | None:
     """Convert HH:MM to ISO8601 (+08:00) using SGE trading-day anchoring."""
     try:
         hh, mm = map(int, time_hhmm.split(":"))
@@ -126,14 +130,24 @@ def parse_point_timestamp_iso(time_hhmm: str, cutoff_sh: datetime) -> str | None
 
 def fetch_sge(inst: Instrument) -> tuple[list[str], list[float], dict]:
     """Fetch price data from SGE API for given instrument."""
-    resp = requests.post(
-        SGE_URL,
-        headers=http_headers(),
-        data="instid=" + inst.instid,
-        timeout=10,
-    )
-    resp.raise_for_status()
-    payload = resp.json()
+    try:
+        resp = requests.post(
+            SGE_URL,
+            headers=http_headers(),
+            data="instid=" + inst.instid,
+            timeout=10,
+        )
+        resp.raise_for_status()
+
+        # Check for rate limiting indicators
+        if resp.status_code == 429:
+            LOG.warning("SGE API rate limit hit for %s", inst.metal)
+            raise requests.exceptions.HTTPError("Rate limited")
+
+        payload = resp.json()
+    except requests.exceptions.RequestException as e:
+        LOG.warning("SGE API request failed for %s: %s", inst.metal, e)
+        raise
 
     times = payload.get("times") or []
     data = payload.get("data") or []
@@ -172,12 +186,13 @@ def inc_fx_request(conn: sqlite3.Connection) -> None:
     """Increment the Alpha Vantage API request count for today."""
     today = datetime.now(timezone.utc).date().isoformat()
     conn.execute(
-        "INSERT OR IGNORE INTO api_requests(date, alpha_vantage_count) VALUES(?, 0)",
+        "INSERT OR IGNORE INTO api_requests(date, alpha_vantage_count) "
+        "VALUES(?, 0)",
         (today,),
     )
     conn.execute(
-        "UPDATE api_requests SET alpha_vantage_count = alpha_vantage_count + 1 "
-        "WHERE date = ?",
+        "UPDATE api_requests SET alpha_vantage_count = "
+        "alpha_vantage_count + 1 WHERE date = ?",
         (today,),
     )
     conn.commit()
@@ -192,14 +207,16 @@ def get_cached_fx(conn: sqlite3.Connection) -> float:
     return float(row[0]) if row else FX_DEFAULT
 
 
-def fetch_fx(conn: sqlite3.Connection, current_fx: float) -> float:
-    """Fetch USD/CNY exchange rate from Alpha Vantage API with fallback to cached rate."""
+def fetch_fx(
+    conn: sqlite3.Connection, current_fx: float, backoff: float = 1.0
+) -> tuple[float, float]:
+    """Fetch USD/CNY rate from Alpha Vantage API with exponential backoff."""
     api_key = os.environ.get("ALPHA_VANTAGE_API_KEY")
     if not api_key:
-        return get_cached_fx(conn)
+        return get_cached_fx(conn), backoff
 
     if not can_make_fx_request(conn):
-        return get_cached_fx(conn)
+        return get_cached_fx(conn), backoff
 
     url = (
         "https://www.alphavantage.co/query"
@@ -211,22 +228,25 @@ def fetch_fx(conn: sqlite3.Connection, current_fx: float) -> float:
         r = requests.get(url, timeout=10)
         r.raise_for_status()
         j = r.json()
-        rate_s = j.get("Realtime Currency Exchange Rate", {}).get("5. Exchange Rate")
+        rate_s = j.get("Realtime Currency Exchange Rate", {}).get(
+            "5. Exchange Rate"
+        )
         if not rate_s:
-            return get_cached_fx(conn)
+            return get_cached_fx(conn), min(backoff * 2, 300.0)
 
         new_fx = float(rate_s)
         if new_fx <= 0:
-            return get_cached_fx(conn)
+            return get_cached_fx(conn), min(backoff * 2, 300.0)
 
         # sanity clamp: <= 100% move
         if abs(new_fx - current_fx) / max(current_fx, 1e-9) > 1.0:
-            return get_cached_fx(conn)
+            return get_cached_fx(conn), backoff
 
         inc_fx_request(conn)
-        return new_fx
-    except Exception:
-        return get_cached_fx(conn)
+        return new_fx, 1.0  # Reset backoff on success
+    except Exception as e:
+        LOG.warning("FX fetch failed: %s", e)
+        return get_cached_fx(conn), min(backoff * 2, 300.0)
 
 
 def init_db(path: str) -> sqlite3.Connection:
@@ -265,22 +285,37 @@ def store_points(
     meta: dict,
 ) -> int:
     """Store price points in database, returning count of inserted records."""
-    n = 0
     cur = conn.cursor()
-    
+    n = 0
+    nan_count = 0
+    min_max_filtered = 0
+
     min_price = meta.get("min")
     max_price = meta.get("max")
 
     try:
         for t_hhmm, price in zip(times, prices):
             if price != price:  # NaN
+                nan_count += 1
                 continue
-                
+
             # Filter out prices outside meta min/max range
             if min_price is not None and price < float(min_price):
+                min_max_filtered += 1
                 continue
             if max_price is not None and price > float(max_price):
+                min_max_filtered += 1
                 continue
+
+            # Log potential placeholder values
+            if (min_price is not None and price == float(min_price)) or (
+                max_price is not None and price == float(max_price)
+            ):
+                LOG.debug(
+                    "%s: price %.4f equals min/max bound near cutoff",
+                    metal,
+                    price,
+                )
 
             ts = parse_point_timestamp_iso(t_hhmm, cutoff_sh)
             if not ts:
@@ -293,6 +328,17 @@ def store_points(
                 (metal, ts, float(price), float(fx)),
             )
             n += 1
+
+        if nan_count > 0:
+            LOG.warning(
+                "%s: filtered %d NaN values from API data", metal, nan_count
+            )
+        if min_max_filtered > 0:
+            LOG.debug(
+                "%s: filtered %d values outside min/max bounds",
+                metal,
+                min_max_filtered,
+            )
 
         return n
 
@@ -311,16 +357,17 @@ def main():
 
     fx = get_cached_fx(conn)
     last_fx = 0.0
+    fx_backoff = 1.0
 
     backoff = 1.0
 
     while True:
         now = time.time()
-        now_sh = datetime.now(SH_TZ)
+        now_sh = datetime.now(SH_TZ)  # Single timestamp for consistency
 
         # refresh FX
         if now - last_fx >= FX_REFRESH_SEC:
-            fx = fetch_fx(conn, fx)
+            fx, fx_backoff = fetch_fx(conn, fx, fx_backoff)
             last_fx = now
             LOG.info("FX USD/CNY = %.6f", fx)
 
@@ -331,14 +378,28 @@ def main():
             for inst in INSTRUMENTS:
                 times, prices, meta = fetch_sge(inst)
 
-                now_sh = datetime.now(SH_TZ)
                 api_sh = parse_delaystr_sh(meta.get("delaystr"))
+
+                # Check for stale API data
+                if api_sh and now_sh:
+                    time_diff = abs((now_sh - api_sh).total_seconds() / 60)
+                    if time_diff > STALE_DATA_THRESHOLD_MIN:
+                        LOG.warning(
+                            "%s: API timestamp %s differs from current %s "
+                            "by %.1f minutes",
+                            inst.metal,
+                            api_sh.isoformat(),
+                            now_sh.isoformat(),
+                            time_diff,
+                        )
 
                 cutoff_sh = market_cutoff_sh(now_sh)
                 if api_sh:
-                    cutoff_sh = min(cutoff_sh, api_sh)
+                    cutoff_sh = min(cutoff_sh, last_closed_minute_sh(api_sh))
 
-                wrote = store_points(conn, inst.metal, cutoff_sh, fx, times, prices, meta)
+                wrote = store_points(
+                    conn, inst.metal, cutoff_sh, fx, times, prices, meta
+                )
                 total += wrote
 
                 LOG.info(

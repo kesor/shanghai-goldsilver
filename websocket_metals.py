@@ -73,7 +73,7 @@ class DataServer:
         return json.dumps(out, separators=(",", ":"), ensure_ascii=False)
 
     async def broadcast_updates(self):
-        """Continuously fetch data and broadcast updates to connected clients."""
+        """Continuously fetch data and broadcast updates to clients."""
         while True:
             payload = self._fetch_payload()
 

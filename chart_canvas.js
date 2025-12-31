@@ -22,15 +22,15 @@ export class CandleChart {
     // acceptance heat (dwell by price bin)
     this.heat = opts.heat ?? {
       enabled: true,
-      bins: 32,          // horizontal bands
-      alpha: 0.22,       // max opacity
-      gamma: 0.6,        // <1 boosts weak zones
+      bins: 32, // horizontal bands
+      alpha: 0.22, // max opacity
+      gamma: 0.6, // <1 boosts weak zones
     };
 
     this.volBands = opts.volBands ?? {
       enabled: false,
-      window: 60,          // candles
-      k: 2.0,              // ±kσ
+      window: 60, // candles
+      k: 2.0, // ±kσ
       alpha: 0.18,
       strokeAlpha: 0.55,
       fill: true,
@@ -38,19 +38,19 @@ export class CandleChart {
 
     this.rangeBox = opts.rangeBox ?? {
       enabled: false,
-      window: 120,        // candles
+      window: 120, // candles
       alpha: 0.12,
-      strokeAlpha: 0.40,
+      strokeAlpha: 0.4,
     };
 
     this.retHist = opts.retHist ?? {
       enabled: true,
       bins: 41,
-      mode: "pct",          // "pct" | "delta"
-      window: 600,          // last N returns
-      wMax: 0.22,           // max panel width as fraction of plot.w
+      mode: "pct", // "pct" | "delta"
+      window: 600, // last N returns
+      wMax: 0.22, // max panel width as fraction of plot.w
       wMinPx: 140,
-      hFrac: 0.38,          // panel height as fraction of plot.h
+      hFrac: 0.38, // panel height as fraction of plot.h
       pad: 10,
       bg: "rgba(0,0,0,1.0)",
       border: "rgba(255,255,255,0.25)",
@@ -79,7 +79,6 @@ export class CandleChart {
 
     this.canvas = null;
     this.ctx = null;
-
   }
 
   setTitle(title) {
@@ -148,11 +147,17 @@ export class CandleChart {
       this.#drawAcceptanceHeat(ctx, plot, x, y, visible);
     }
 
-    if (this.volBands?.enabled && visible.length >= (this.volBands.window ?? 60) + 2) {
+    if (
+      this.volBands?.enabled &&
+      visible.length >= (this.volBands.window ?? 60) + 2
+    ) {
       this.#drawVolBands(ctx, plot, x, y, visible);
     }
 
-    if (this.rangeBox?.enabled && visible.length >= (this.rangeBox.window ?? 120)) {
+    if (
+      this.rangeBox?.enabled &&
+      visible.length >= (this.rangeBox.window ?? 120)
+    ) {
       this.#drawRangeBox(ctx, plot, x, y, visible);
     }
 
@@ -302,22 +307,23 @@ export class CandleChart {
     const loCenterPx = xh(loC);
     const hiCenterPx = xh(hiC);
 
-    const needLeft = Math.max(0, (loW / 2 + minGapPx) - (loCenterPx - x0));
-    const needRight = Math.max(0, (hiW / 2 + minGapPx) - (x1 - hiCenterPx));
+    const needLeft = Math.max(0, loW / 2 + minGapPx - (loCenterPx - x0));
+    const needRight = Math.max(0, hiW / 2 + minGapPx - (x1 - hiCenterPx));
 
     // rebuild scale with expanded range
-    xh = d3.scaleLinear()
+    xh = d3
+      .scaleLinear()
       .domain([lo, hi])
       .range([x0 + needLeft, x1 - needRight]);
 
     // edge exclusion zones for interior labels (use HALF widths, in PANEL coords)
-    const leftZoneRight = x0 + (loW / 2) + minGapPx;
-    const rightZoneLeft = x1 - (hiW / 2) - minGapPx;
+    const leftZoneRight = x0 + loW / 2 + minGapPx;
+    const rightZoneLeft = x1 - hiW / 2 - minGapPx;
 
     // reserve label gutter below bars
     const labelH = cfg.labelH ?? 16;
-    const barTop = iy + 16;                 // leave room for title
-    const barBottom = iy + ih - labelH;     // bars stop here
+    const barTop = iy + 16; // leave room for title
+    const barBottom = iy + ih - labelH; // bars stop here
     const barH = Math.max(10, barBottom - barTop);
 
     // zero line (only across bar area)
@@ -342,7 +348,7 @@ export class CandleChart {
     const q = (hi - lo) / 200;
     const key = (v) => Math.round(snap0(v) / q) * q;
 
-    const want0 = (lo < 0 && hi > 0);
+    const want0 = lo < 0 && hi > 0;
     const must = [lo, hi, ...(want0 ? [0] : [])];
 
     // initial tick count guess from pixel width
@@ -353,7 +359,8 @@ export class CandleChart {
     const candidates = [...ticks, ...must].map(key).sort((a, b) => a - b);
     const uniq = [];
     for (const v of candidates) {
-      if (!uniq.length || Math.abs(v - uniq[uniq.length - 1]) > q * 0.5) uniq.push(v);
+      if (!uniq.length || Math.abs(v - uniq[uniq.length - 1]) > q * 0.5)
+        uniq.push(v);
     }
 
     // reserve space for edge labels first
@@ -389,8 +396,9 @@ export class CandleChart {
     }
 
     // --- force a label under the outlier BIN (max |return|), aligned to bar center ---
-    const outlier = tail.reduce((best, r) =>
-      Math.abs(r) > Math.abs(best) ? r : best, 0
+    const outlier = tail.reduce(
+      (best, r) => (Math.abs(r) > Math.abs(best) ? r : best),
+      0,
     );
 
     // compute outlier bin index (same logic as counts)
@@ -418,7 +426,8 @@ export class CandleChart {
         const uw = ctx.measureText(utxt).width;
         const uleft = upx - uw / 2;
         const uright = upx + uw / 2;
-        if (!(right + minGapPx <= uleft || left >= uright + minGapPx)) return true;
+        if (!(right + minGapPx <= uleft || left >= uright + minGapPx))
+          return true;
       }
       return false;
     };
@@ -442,7 +451,10 @@ export class CandleChart {
           let bestDx = Infinity;
           for (let i = 0; i < fitted.length; i++) {
             const dx = Math.abs(xh(fitted[i]) - outPx);
-            if (dx < bestDx) { bestDx = dx; j = i; }
+            if (dx < bestDx) {
+              bestDx = dx;
+              j = i;
+            }
           }
           if (j >= 0) {
             const removed = fitted[j];
@@ -494,7 +506,7 @@ export class CandleChart {
 
       const x0 = xh(binL);
       const x1 = xh(binR);
-      const w = Math.max(1, (x1 - x0) - 1);
+      const w = Math.max(1, x1 - x0 - 1);
 
       const h = (c / maxC) * barH;
       const y0 = barBottom - h;
@@ -502,19 +514,17 @@ export class CandleChart {
       ctx.fillRect(x0 + 0.5, y0, w, h);
     }
 
-
     this.#unclip();
     ctx.restore();
   }
-
 
   #drawRangeBox(ctx, plot, x, y, visible) {
     const cfg = this.rangeBox;
     const win = Math.max(20, cfg.window ?? 120);
     const tail = visible.slice(-win);
 
-    const hi = d3.max(tail, d => d.high);
-    const lo = d3.min(tail, d => d.low);
+    const hi = d3.max(tail, (d) => d.high);
+    const lo = d3.min(tail, (d) => d.low);
     if (!Number.isFinite(hi) || !Number.isFinite(lo)) return;
 
     this.#clipPlot(plot);
@@ -526,13 +536,12 @@ export class CandleChart {
     ctx.fillStyle = `rgba(255,255,255,${(cfg.alpha ?? 0.12).toFixed(4)})`;
     ctx.fillRect(plot.left, Math.min(yTop, yBot), plot.w, h);
 
-    ctx.strokeStyle = `rgba(255,255,255,${(cfg.strokeAlpha ?? 0.40).toFixed(4)})`;
+    ctx.strokeStyle = `rgba(255,255,255,${(cfg.strokeAlpha ?? 0.4).toFixed(4)})`;
     ctx.lineWidth = 1;
     ctx.strokeRect(plot.left, Math.min(yTop, yBot), plot.w, h);
 
     this.#unclip();
   }
-
 
   #drawVolBands(ctx, plot, x, y, visible) {
     const cfg = this.volBands;
@@ -541,7 +550,7 @@ export class CandleChart {
 
     // last win closes
     const tail = visible.slice(-win);
-    const closes = tail.map(d => d.close).filter(Number.isFinite);
+    const closes = tail.map((d) => d.close).filter(Number.isFinite);
     if (closes.length < 10) return;
 
     // deltas (same units as chart)
@@ -550,7 +559,8 @@ export class CandleChart {
     if (ds.length < 5) return;
 
     const mean = ds.reduce((a, b) => a + b, 0) / ds.length;
-    const varr = ds.reduce((a, b) => a + (b - mean) * (b - mean), 0) / ds.length;
+    const varr =
+      ds.reduce((a, b) => a + (b - mean) * (b - mean), 0) / ds.length;
     const sigma = Math.sqrt(varr);
     if (!Number.isFinite(sigma) || sigma <= 0) return;
 
@@ -564,7 +574,12 @@ export class CandleChart {
     // band
     if (cfg.fill !== false) {
       ctx.fillStyle = `rgba(255,255,255,${(cfg.alpha ?? 0.18).toFixed(4)})`;
-      ctx.fillRect(plot.left, Math.min(y(hi), y(lo)), plot.w, Math.abs(y(lo) - y(hi)));
+      ctx.fillRect(
+        plot.left,
+        Math.min(y(hi), y(lo)),
+        plot.w,
+        Math.abs(y(lo) - y(hi)),
+      );
     }
 
     // lines
@@ -587,12 +602,14 @@ export class CandleChart {
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
     const digits = this.unit === "CNY/g" ? 2 : 0;
-    ctx.fillText(`±${k}σ ≈ ¥${sigma.toFixed(digits)}`, plot.left + 6, plot.top + 6);
+    ctx.fillText(
+      `±${k}σ ≈ ¥${sigma.toFixed(digits)}`,
+      plot.left + 6,
+      plot.top + 6,
+    );
 
     this.#unclip();
   }
-
-
 
   // ------------------------
   // acceptance heat
@@ -619,7 +636,10 @@ export class CandleChart {
       const price = d.close;
       if (!Number.isFinite(price)) continue;
 
-      const idx = Math.max(0, Math.min(bins - 1, Math.floor((price - lo) / step)));
+      const idx = Math.max(
+        0,
+        Math.min(bins - 1, Math.floor((price - lo) / step)),
+      );
 
       let w = 1;
       if (i + 1 < visible.length) {
@@ -657,7 +677,6 @@ export class CandleChart {
 
     this.#unclip();
   }
-
 
   // ------------------------
   // title

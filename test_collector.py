@@ -2,18 +2,22 @@ import os
 import sqlite3
 import tempfile
 from datetime import datetime
-from datetime import time as dtime
-from datetime import timedelta
 from unittest.mock import MagicMock, patch
 
-import pytest
-import pytz  # type: ignore
-
-from collector import (FX_DEFAULT, SH_TZ, Instrument, can_make_fx_request,
-                       fetch_sge, get_cached_fx, inc_fx_request,
-                       last_closed_minute_sh, market_cutoff_sh,
-                       parse_delaystr_sh, parse_point_timestamp_iso,
-                       trading_day_start_date_sh)
+from collector import (
+    FX_DEFAULT,
+    SH_TZ,
+    Instrument,
+    can_make_fx_request,
+    fetch_sge,
+    get_cached_fx,
+    inc_fx_request,
+    last_closed_minute_sh,
+    market_cutoff_sh,
+    parse_delaystr_sh,
+    parse_point_timestamp_iso,
+    trading_day_start_date_sh,
+)
 
 
 class TestTradingDayLogic:
@@ -211,7 +215,8 @@ class TestFXRateLimiting:
         inc_fx_request(self.conn)
         today = datetime.now().date().isoformat()
         row = self.conn.execute(
-            "SELECT alpha_vantage_count FROM api_requests WHERE date = ?", (today,)
+            "SELECT alpha_vantage_count FROM api_requests WHERE date = ?",
+            (today,),
         ).fetchone()
         assert row[0] == 1
 
@@ -225,7 +230,8 @@ class TestFXRateLimiting:
         self.conn.commit()
         inc_fx_request(self.conn)
         row = self.conn.execute(
-            "SELECT alpha_vantage_count FROM api_requests WHERE date = ?", (today,)
+            "SELECT alpha_vantage_count FROM api_requests WHERE date = ?",
+            (today,),
         ).fetchone()
         assert row[0] == 6
 
@@ -331,8 +337,9 @@ class TestFetchFX:
         """Test FX fetch with no API key."""
         from collector import fetch_fx
 
-        result = fetch_fx(self.conn, 7.0)
-        assert result == FX_DEFAULT
+        rate, backoff = fetch_fx(self.conn, 7.0)
+        assert rate == FX_DEFAULT
+        assert backoff == 1.0
 
     @patch.dict(os.environ, {"ALPHA_VANTAGE_API_KEY": "test_key"})
     @patch("collector.requests.get")
@@ -346,8 +353,9 @@ class TestFetchFX:
         }
         mock_get.return_value = mock_response
 
-        result = fetch_fx(self.conn, 7.0)
-        assert result == 7.2345
+        rate, backoff = fetch_fx(self.conn, 7.0)
+        assert rate == 7.2345
+        assert backoff == 1.0
 
     @patch.dict(os.environ, {"ALPHA_VANTAGE_API_KEY": "test_key"})
     @patch("collector.requests.get")
@@ -359,8 +367,9 @@ class TestFetchFX:
         mock_response.json.return_value = {}
         mock_get.return_value = mock_response
 
-        result = fetch_fx(self.conn, 7.0)
-        assert result == FX_DEFAULT
+        rate, backoff = fetch_fx(self.conn, 7.0)
+        assert rate == FX_DEFAULT
+        assert backoff == 2.0
 
     @patch.dict(os.environ, {"ALPHA_VANTAGE_API_KEY": "test_key"})
     @patch("collector.requests.get")
@@ -376,8 +385,9 @@ class TestFetchFX:
         )
         self.conn.commit()
 
-        result = fetch_fx(self.conn, 7.0)
-        assert result == FX_DEFAULT
+        rate, backoff = fetch_fx(self.conn, 7.0)
+        assert rate == FX_DEFAULT
+        assert backoff == 1.0
         # Should not call the API
         mock_get.assert_not_called()
 
@@ -416,11 +426,15 @@ class TestStorePoints:
         times = ["14:25", "14:26"]
         prices = [500.0, 501.0]
 
-        result = store_points(self.conn, "gold", cutoff, 7.0, times, prices)
+        result = store_points(
+            self.conn, "gold", cutoff, 7.0, times, prices, {}
+        )
         assert result == 2
 
         # Verify data was stored
-        rows = self.conn.execute("SELECT * FROM prices ORDER BY timestamp").fetchall()
+        rows = self.conn.execute(
+            "SELECT * FROM prices ORDER BY timestamp"
+        ).fetchall()
         assert len(rows) == 2
         assert rows[0][2] == 500.0  # price_cny
         assert rows[1][2] == 501.0
@@ -433,5 +447,7 @@ class TestStorePoints:
         times = ["14:25", "14:26"]
         prices = [500.0, float("nan")]
 
-        result = store_points(self.conn, "gold", cutoff, 7.0, times, prices)
+        result = store_points(
+            self.conn, "gold", cutoff, 7.0, times, prices, {}
+        )
         assert result == 1  # Only one valid price stored
