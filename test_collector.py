@@ -4,20 +4,11 @@ import tempfile
 from datetime import datetime
 from unittest.mock import MagicMock, patch
 
-from collector import (
-    FX_DEFAULT,
-    SH_TZ,
-    Instrument,
-    can_make_fx_request,
-    fetch_sge,
-    get_cached_fx,
-    inc_fx_request,
-    last_closed_minute_sh,
-    market_cutoff_sh,
-    parse_delaystr_sh,
-    parse_point_timestamp_iso,
-    trading_day_start_date_sh,
-)
+from collector import (FX_DEFAULT, SH_TZ, Instrument, can_make_fx_request,
+                       fetch_sge, get_cached_fx, inc_fx_request,
+                       last_closed_minute_sh, market_cutoff_sh,
+                       parse_delaystr_sh, parse_point_timestamp_iso,
+                       trading_day_start_date_sh)
 
 
 class TestTradingDayLogic:

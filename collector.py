@@ -24,8 +24,10 @@ SH_TZ = pytz.timezone("Asia/Shanghai")
 FX_DEFAULT = 7.0060
 FETCH_INTERVAL_SEC = 60
 FX_REFRESH_SEC = 3600
-# Warn if API timestamp differs by more than 5 minutes
-STALE_DATA_THRESHOLD_MIN = 5
+# Warn if API timestamp differs by more than N minutes (configurable)
+STALE_DATA_THRESHOLD_MIN = int(os.environ.get("STALE_DATA_THRESHOLD_MIN", "5"))
+# Add extra buffer to avoid storing provisional prices (0 = disabled)
+PRICE_BUFFER_MIN = int(os.environ.get("PRICE_BUFFER_MIN", "0"))
 
 
 @dataclass(frozen=True)
@@ -240,7 +242,10 @@ def fetch_fx(
 
         # sanity clamp: <= 100% move
         if abs(new_fx - current_fx) / max(current_fx, 1e-9) > 1.0:
-            return get_cached_fx(conn), backoff
+            LOG.warning(
+                "FX sanity clamp triggered: %.6f → %.6f", current_fx, new_fx
+            )
+            return get_cached_fx(conn), min(backoff * 2, 300.0)
 
         inc_fx_request(conn)
         return new_fx, 1.0  # Reset backoff on success
@@ -289,6 +294,7 @@ def store_points(
     n = 0
     nan_count = 0
     min_max_filtered = 0
+    latest_ts = None
 
     min_price = meta.get("min")
     max_price = meta.get("max")
@@ -307,19 +313,23 @@ def store_points(
                 min_max_filtered += 1
                 continue
 
-            # Log potential placeholder values
-            if (min_price is not None and price == float(min_price)) or (
-                max_price is not None and price == float(max_price)
-            ):
-                LOG.debug(
-                    "%s: price %.4f equals min/max bound near cutoff",
-                    metal,
-                    price,
-                )
-
             ts = parse_point_timestamp_iso(t_hhmm, cutoff_sh)
             if not ts:
                 continue
+
+            # Log potential placeholder values near cutoff
+            point_sh = datetime.fromisoformat(ts)
+            if point_sh >= cutoff_sh - timedelta(minutes=5):
+                if (min_price is not None and price == float(min_price)) or (
+                    max_price is not None and price == float(max_price)
+                ):
+                    LOG.debug(
+                        "%s: price %.4f equals min/max bound near cutoff "
+                        "at %s",
+                        metal,
+                        price,
+                        ts,
+                    )
 
             cur.execute(
                 "INSERT OR REPLACE INTO prices("
@@ -328,6 +338,7 @@ def store_points(
                 (metal, ts, float(price), float(fx)),
             )
             n += 1
+            latest_ts = ts
 
         if nan_count > 0:
             LOG.warning(
@@ -340,6 +351,15 @@ def store_points(
                 min_max_filtered,
             )
 
+        # Debug log for latest stored timestamp
+        if latest_ts:
+            LOG.debug(
+                "%s: stored latest timestamp %s (cutoff: %s)",
+                metal,
+                latest_ts,
+                cutoff_sh.isoformat(),
+            )
+
         return n
 
     finally:
@@ -348,8 +368,10 @@ def store_points(
 
 def main():
     """Main collector loop - fetches SGE prices and stores in database."""
+    # Allow debug logging via environment variable
+    log_level = logging.DEBUG if os.environ.get("DEBUG") else logging.INFO
     logging.basicConfig(
-        level=logging.INFO, format="%(asctime)s %(levelname)s: %(message)s"
+        level=log_level, format="%(asctime)s %(levelname)s: %(message)s"
     )
 
     db_path = os.environ.get("SHANGHAI_DB", "shanghai_metals.db")
@@ -396,6 +418,16 @@ def main():
                 cutoff_sh = market_cutoff_sh(now_sh)
                 if api_sh:
                     cutoff_sh = min(cutoff_sh, last_closed_minute_sh(api_sh))
+
+                # Add extra buffer to avoid storing provisional prices
+                if PRICE_BUFFER_MIN > 0:
+                    cutoff_sh = cutoff_sh - timedelta(minutes=PRICE_BUFFER_MIN)
+                    LOG.debug(
+                        "%s: applied %d min buffer, cutoff now: %s",
+                        inst.metal,
+                        PRICE_BUFFER_MIN,
+                        cutoff_sh.isoformat(),
+                    )
 
                 wrote = store_points(
                     conn, inst.metal, cutoff_sh, fx, times, prices, meta
