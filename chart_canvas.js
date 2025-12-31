@@ -148,11 +148,6 @@ export class CandleChart {
       this.#drawAcceptanceHeat(ctx, plot, x, y, visible);
     }
 
-    this.#drawGrid(ctx, plot, y);
-    this.#drawAxes(ctx, plot, x, y, fx);
-
-    if (visible.length) this.#drawCandles(ctx, plot, x, y, visible);
-
     if (this.volBands?.enabled && visible.length >= (this.volBands.window ?? 60) + 2) {
       this.#drawVolBands(ctx, plot, x, y, visible);
     }
@@ -160,6 +155,10 @@ export class CandleChart {
     if (this.rangeBox?.enabled && visible.length >= (this.rangeBox.window ?? 120)) {
       this.#drawRangeBox(ctx, plot, x, y, visible);
     }
+
+    this.#drawAxes(ctx, plot, x, y, fx);
+    this.#drawGrid(ctx, plot, y);
+    if (visible.length) this.#drawCandles(ctx, plot, x, y, visible);
 
     if (this.retHist?.enabled && visible.length >= 20) {
       this.#drawReturnHistogramInGap(ctx, plot, x, y, visible);
@@ -238,7 +237,9 @@ export class CandleChart {
 
     const counts = new Array(bins).fill(0);
     for (const r of tail) {
-      const idx = Math.max(0, Math.min(bins - 1, Math.floor((r - lo) / step)));
+      let idx = Math.floor((r - lo) / step);
+      if (idx === bins) idx = bins - 1; // r == hi
+      idx = Math.max(0, Math.min(bins - 1, idx));
       counts[idx] += 1;
     }
     const maxC = Math.max(...counts);
@@ -266,26 +267,61 @@ export class CandleChart {
     const iw = panelW - 2 * pad;
     const ih = panelH - 2 * pad;
 
+    // --- x-axis scale with range padding so edge labels can be centered under edge bars ---
+    const x0 = ix;
+    const x1 = ix + iw;
+
+    const fmt = (v) => {
+      if (cfg.mode === "pct") {
+        const p = v * 100;
+        const p0 = Math.abs(p) < 1e-9 ? 0 : p;
+        return `${p0.toFixed(2)}%`;
+      }
+      const digits = this.unit === "CNY/g" ? 2 : 0;
+      const v0 = Math.abs(v) < 1e-9 ? 0 : v;
+      return `¥${v0.toFixed(digits)}`;
+    };
+
+    // edge bin centers (data units)
+    const loC = lo + 0.5 * step;
+    const hiC = hi - 0.5 * step;
+
+    const minGapPx = 12; // fontPx
+
+    // measure label widths
+    ctx.font = cfg.font ?? "12px Arial";
+    const loText = fmt(loC);
+    const hiText = fmt(hiC);
+    const loW = ctx.measureText(loText).width;
+    const hiW = ctx.measureText(hiText).width;
+
+    // provisional scale for measuring where edge bin centers land
+    let xh = d3.scaleLinear().domain([lo, hi]).range([x0, x1]);
+
+    // how far the centered labels would stick out past the panel edges
+    const loCenterPx = xh(loC);
+    const hiCenterPx = xh(hiC);
+
+    const needLeft = Math.max(0, (loW / 2 + minGapPx) - (loCenterPx - x0));
+    const needRight = Math.max(0, (hiW / 2 + minGapPx) - (x1 - hiCenterPx));
+
+    // rebuild scale with expanded range
+    xh = d3.scaleLinear()
+      .domain([lo, hi])
+      .range([x0 + needLeft, x1 - needRight]);
+
+    // edge exclusion zones for interior labels (use HALF widths, in PANEL coords)
+    const leftZoneRight = x0 + (loW / 2) + minGapPx;
+    const rightZoneLeft = x1 - (hiW / 2) - minGapPx;
+
     // reserve label gutter below bars
     const labelH = cfg.labelH ?? 16;
     const barTop = iy + 16;                 // leave room for title
     const barBottom = iy + ih - labelH;     // bars stop here
     const barH = Math.max(10, barBottom - barTop);
 
-    // bars
-    const barW = iw / bins;
-    ctx.fillStyle = `rgba(255,255,255,${(cfg.barAlpha ?? 0.55).toFixed(4)})`;
-    for (let i = 0; i < bins; i++) {
-      const c = counts[i];
-      if (!c) continue;
-      const h = (c / maxC) * barH;
-      const x0 = ix + i * barW;
-      const y0 = barBottom - h;
-      ctx.fillRect(x0 + 0.5, y0, Math.max(1, barW - 1), h);
-    }
-
     // zero line (only across bar area)
-    const zeroX = ix + ((0 - lo) / (hi - lo)) * iw;
+    const zeroX = xh(0);
     ctx.strokeStyle = "rgba(255,255,255,0.35)";
     ctx.beginPath();
     ctx.moveTo(zeroX, barTop);
@@ -297,23 +333,175 @@ export class CandleChart {
     ctx.fillStyle = "rgba(255,255,255,0.85)";
     ctx.textBaseline = "top";
 
-    const fmt = (v) => {
-      if (cfg.mode === "pct") return `${(v * 100).toFixed(2)}%`;
-      const digits = this.unit === "CNY/g" ? 2 : 0;
-      return `¥${v.toFixed(digits)}`;
+    const tickY = barBottom + 2;
+
+    const snap0 = (v) => {
+      const eps0 = (hi - lo) * 1e-9;
+      return Math.abs(v) < eps0 ? 0 : v;
+    };
+    const q = (hi - lo) / 200;
+    const key = (v) => Math.round(snap0(v) / q) * q;
+
+    const want0 = (lo < 0 && hi > 0);
+    const must = [lo, hi, ...(want0 ? [0] : [])];
+
+    // initial tick count guess from pixel width
+    const target = Math.max(3, Math.floor(iw / 40));
+    const ticks = xh.ticks(target);
+
+    // candidates -> snap/quantize -> sort -> uniq
+    const candidates = [...ticks, ...must].map(key).sort((a, b) => a - b);
+    const uniq = [];
+    for (const v of candidates) {
+      if (!uniq.length || Math.abs(v - uniq[uniq.length - 1]) > q * 0.5) uniq.push(v);
+    }
+
+    // reserve space for edge labels first
+    const loK = key(lo);
+    const hiK = key(hi);
+
+    ctx.textBaseline = "top";
+    ctx.font = cfg.font ?? "12px Arial";
+
+    const loBarC = key(lo + 0.5 * step);
+    const hiBarC = key(hi - 0.5 * step);
+
+    // fit interior ticks by pixel spacing, keep them out of the edge zones
+    const fitted = [];
+    let prevRight = leftZoneRight;
+
+    for (const v of uniq) {
+      if (v === loK || v === hiK) continue;
+
+      const px = xh(v);
+      const w = ctx.measureText(fmt(v)).width;
+
+      const left = px - w / 2;
+      const right = px + w / 2;
+
+      if (left < leftZoneRight) continue;
+      if (right > rightZoneLeft) continue;
+
+      if (left >= prevRight + minGapPx) {
+        fitted.push(v);
+        prevRight = right;
+      }
+    }
+
+    // --- force a label under the outlier BIN (max |return|), aligned to bar center ---
+    const outlier = tail.reduce((best, r) =>
+      Math.abs(r) > Math.abs(best) ? r : best, 0
+    );
+
+    // compute outlier bin index (same logic as counts)
+    let outIdx = Math.floor((outlier - lo) / step);
+    if (outIdx === bins) outIdx = bins - 1; // outlier == hi edge
+    outIdx = Math.max(0, Math.min(bins - 1, outIdx));
+
+    // label the BIN CENTER, not the domain edge
+    const outCenter = lo + (outIdx + 0.5) * step;
+    const outK = key(outCenter);
+
+    // helper: overlap test for a candidate tick value v (in data units)
+    const overlaps = (vals, v) => {
+      const px = xh(v);
+      const txt = fmt(v);
+      const w = ctx.measureText(txt).width;
+      const left = px - w / 2;
+      const right = px + w / 2;
+
+      if (left < leftZoneRight || right > rightZoneLeft) return true;
+
+      for (const u of vals) {
+        const upx = xh(u);
+        const utxt = fmt(u);
+        const uw = ctx.measureText(utxt).width;
+        const uleft = upx - uw / 2;
+        const uright = upx + uw / 2;
+        if (!(right + minGapPx <= uleft || left >= uright + minGapPx)) return true;
+      }
+      return false;
     };
 
-    ctx.textAlign = "left";
-    ctx.fillText(fmt(lo), ix, barBottom + 2);
+    // if it fits, add/replace into fitted
+    {
+      const outPx = xh(outK);
+      const outTxt = fmt(outK);
+      const outW = ctx.measureText(outTxt).width;
+      const outLeft = outPx - outW / 2;
+      const outRight = outPx + outW / 2;
+
+      const fitsInBox = outLeft >= leftZoneRight && outRight <= rightZoneLeft;
+
+      if (fitsInBox && outK !== loK && outK !== hiK) {
+        if (!overlaps(fitted, outK)) {
+          fitted.push(outK);
+        } else {
+          // replace nearest existing tick (by pixel distance, not value distance)
+          let j = -1;
+          let bestDx = Infinity;
+          for (let i = 0; i < fitted.length; i++) {
+            const dx = Math.abs(xh(fitted[i]) - outPx);
+            if (dx < bestDx) { bestDx = dx; j = i; }
+          }
+          if (j >= 0) {
+            const removed = fitted[j];
+            fitted[j] = outK;
+
+            const tmp = fitted.filter((_, i) => i !== j);
+            if (overlaps(tmp, outK)) fitted[j] = removed;
+          }
+        }
+
+        fitted.sort((a, b) => a - b);
+      }
+    }
+
+    // draw interior ticks
+    ctx.strokeStyle = "rgba(255,255,255,0.25)";
+    ctx.fillStyle = "rgba(255,255,255,0.85)";
+
+    for (const v of fitted) {
+      const px = xh(v);
+
+      ctx.beginPath();
+      ctx.moveTo(px, barBottom);
+      ctx.lineTo(px, barBottom + 4);
+      ctx.stroke();
+
+      ctx.textAlign = "center";
+      ctx.fillText(fmt(v), px, tickY);
+    }
+
+    // draw endpoints once, edge-aligned
     ctx.textAlign = "center";
-    ctx.fillText(fmt(0), ix + iw / 2, barBottom + 2);
-    ctx.textAlign = "right";
-    ctx.fillText(fmt(hi), ix + iw, barBottom + 2);
+    ctx.fillText(loText, xh(loBarC), tickY);
+    ctx.fillText(hiText, xh(hiBarC), tickY);
 
     // title
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    ctx.fillText(`Returns (${cfg.mode})`, ix, iy);
+    ctx.fillText(`Returns ${cfg.mode}`, ix, iy);
+
+    // bars (draw by bin edges, not by index)
+    ctx.fillStyle = `rgba(255,255,255,${(cfg.barAlpha ?? 0.55).toFixed(4)})`;
+    for (let i = 0; i < bins; i++) {
+      const c = counts[i];
+      if (!c) continue;
+
+      const binL = lo + i * step;
+      const binR = lo + (i + 1) * step;
+
+      const x0 = xh(binL);
+      const x1 = xh(binR);
+      const w = Math.max(1, (x1 - x0) - 1);
+
+      const h = (c / maxC) * barH;
+      const y0 = barBottom - h;
+
+      ctx.fillRect(x0 + 0.5, y0, w, h);
+    }
+
 
     this.#unclip();
     ctx.restore();
@@ -661,7 +849,7 @@ export class CandleChart {
   #drawGrid(ctx, plot, y) {
     // Draw horizontal grid lines
     ctx.lineWidth = 0.5;
-    ctx.strokeStyle = "#333";
+    ctx.strokeStyle = "#999";
 
     this.#clipPlot(plot);
     for (const t of y.ticks(8)) {
