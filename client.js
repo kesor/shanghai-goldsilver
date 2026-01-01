@@ -11,7 +11,15 @@ const silverChart = new CandleChart("silver-chart", {
   metal: "silver",
 }).setTitle("Ag(T+D)");
 
-new PriceStream("ws://localhost:8001")
+// Render empty charts initially
+goldChart.render([]);
+silverChart.render([]);
+
+const priceStream = new PriceStream("ws://localhost:8001")
   .on("gold", (data) => goldChart.render(createOHLC(data)))
-  .on("silver", (data) => silverChart.render(createOHLC(data)))
-  .connect();
+  .on("silver", (data) => silverChart.render(createOHLC(data)));
+
+goldChart.priceStream = priceStream;
+silverChart.priceStream = priceStream;
+
+priceStream.connect();

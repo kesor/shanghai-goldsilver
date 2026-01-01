@@ -17,7 +17,7 @@ class WSConfig:
     ws_port: int = 8001
     http_port: int = 8000
     db_path: str = "shanghai_metals.db"
-    lookback_hours: int = 36
+    lookback_hours: int = 6
     poll_sec: float = 1.0
 
 
@@ -30,13 +30,13 @@ class DataServer:
     async def register(self, ws):
         """Register new WebSocket client and send initial data."""
         self.clients.add(ws)
-        await ws.send(self._fetch_payload())
+        await ws.send(self._fetch_payload(0))
 
     async def unregister(self, ws):
         """Remove WebSocket client from active clients set."""
         self.clients.discard(ws)
 
-    def _fetch_payload(self) -> str:
+    def _fetch_payload(self, offset_hours: int = 0) -> str:
         """Return JSON string: { gold: [...], silver: [...] }"""
         out: Dict[str, list] = {"gold": [], "silver": []}
 
@@ -44,26 +44,52 @@ class DataServer:
             conn = sqlite3.connect(self.cfg.db_path)
             conn.row_factory = sqlite3.Row
 
-            sql = """
-        SELECT timestamp, price_cny, usd_cny_rate
-        FROM prices
-        WHERE metal = ?
-          AND datetime(timestamp) >= datetime('now', ?)
-        ORDER BY datetime(timestamp)
-      """
-
-            lookback = f"-{int(self.cfg.lookback_hours)} hours"
-
-            for metal in ("gold", "silver"):
-                rows = conn.execute(sql, (metal, lookback)).fetchall()
-                out[metal] = [
-                    {
-                        "timestamp": r["timestamp"],
-                        "price_cny": r["price_cny"],
-                        "usd_cny_rate": r["usd_cny_rate"],
-                    }
-                    for r in rows
-                ]
+            if offset_hours == 0:
+                # Live data - recent hours only
+                sql = """
+            SELECT timestamp, price_cny, usd_cny_rate
+            FROM prices
+            WHERE metal = ?
+              AND datetime(timestamp) >= datetime('now', ?)
+            ORDER BY datetime(timestamp)
+          """
+                lookback = f"-{int(self.cfg.lookback_hours)} hours"
+                
+                for metal in ("gold", "silver"):
+                    rows = conn.execute(sql, (metal, lookback)).fetchall()
+                    out[metal] = [
+                        {
+                            "timestamp": r["timestamp"],
+                            "price_cny": r["price_cny"],
+                            "usd_cny_rate": r["usd_cny_rate"],
+                        }
+                        for r in rows
+                    ]
+            else:
+                # Historical data - 36 hour window
+                sql = """
+            SELECT timestamp, price_cny, usd_cny_rate
+            FROM prices
+            WHERE metal = ?
+              AND datetime(timestamp) >= datetime('now', ?)
+              AND datetime(timestamp) < datetime('now', ?)
+            ORDER BY datetime(timestamp)
+          """
+                start_offset = f"-{int(36 + offset_hours)} hours"
+                end_offset = f"-{offset_hours} hours"
+                
+                for metal in ("gold", "silver"):
+                    rows = conn.execute(sql, (metal, start_offset, end_offset)).fetchall()
+                    out[metal] = [
+                        {
+                            "timestamp": r["timestamp"],
+                            "price_cny": r["price_cny"],
+                            "usd_cny_rate": r["usd_cny_rate"],
+                        }
+                        for r in rows
+                    ]
+                
+                out["_offset"] = offset_hours
 
             conn.close()
 
@@ -75,7 +101,7 @@ class DataServer:
     async def broadcast_updates(self):
         """Continuously fetch data and broadcast updates to clients."""
         while True:
-            payload = self._fetch_payload()
+            payload = self._fetch_payload(0)
 
             if payload != self.last_payload:
                 self.last_payload = payload
@@ -96,7 +122,16 @@ class DataServer:
         """Handle WebSocket client connection lifecycle."""
         await self.register(ws)
         try:
-            await ws.wait_closed()
+            async for message in ws:
+                try:
+                    req = json.loads(message)
+                    if req.get("type") == "fetch" and "offset_hours" in req:
+                        payload = self._fetch_payload(req["offset_hours"])
+                        await ws.send(payload)
+                except Exception as e:
+                    print(f"Message error: {e}")
+        except Exception:
+            pass
         finally:
             await self.unregister(ws)
 

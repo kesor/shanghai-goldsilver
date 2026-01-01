@@ -13,6 +13,10 @@ export class CandleChart {
     this.unit = opts.unit ?? "CNY/g"; // "CNY/g" | "CNY/kg"
 
     this.margin = opts.margin ?? { top: 20, right: 120, bottom: 30, left: 90 };
+    
+    // Session navigation
+    this.sessionOffset = 0; // 0 = current sessions, -1 = previous, etc.
+    this.priceStream = null; // Will be set by client
 
     this.fills = opts.fills ?? {
       night: "rgba(25, 25, 112, 0.35)",
@@ -89,16 +93,13 @@ export class CandleChart {
 
   render(ohlc) {
     // Render candlestick chart with given OHLC data
+    this.lastOhlc = ohlc; // Store for navigation
+    
     const container = document.getElementById(this.containerId);
     if (!container) return this;
 
     // always clear/repaint container
     container.innerHTML = "";
-
-    if (!ohlc?.length) {
-      this.#setTitle(container, this.title);
-      return this;
-    }
 
     const width = container.clientWidth;
     const height = container.clientHeight - 40;
@@ -116,18 +117,24 @@ export class CandleChart {
     // windowed x
     const x = this.#buildX(width);
 
-    // visible data only (keeps gap data if it exists, does not create artificial gap fill)
-    const [d0, d1] = x.domain();
-    const domMin = d0.getTime();
-    const domMax = d1.getTime();
+    let visible = [];
+    let fx = NaN;
 
-    const visible = ohlc.filter((d) => {
-      const t = d.date.getTime();
-      return t >= domMin && t <= domMax;
-    });
+    if (ohlc?.length) {
+      // visible data only (keeps gap data if it exists, does not create artificial gap fill)
+      const [d0, d1] = x.domain();
+      const domMin = d0.getTime();
+      const domMax = d1.getTime();
 
-    // title uses the window, but stats use visible data if present
-    const fx = visible.length ? visible[visible.length - 1].fx_close : NaN;
+      visible = ohlc.filter((d) => {
+        const t = d.date.getTime();
+        return t >= domMin && t <= domMax;
+      });
+
+      // title uses the window, but stats use visible data if present
+      fx = visible.length ? visible[visible.length - 1].fx_close : NaN;
+    }
+
     this.#setTitle(container, this.#buildTitle(visible, fx));
 
     // still render axes/sessions even if no points in the window
@@ -169,6 +176,9 @@ export class CandleChart {
       this.#drawReturnHistogramInGap(ctx, plot, x, y, visible);
     }
 
+    // Add navigation arrows
+    this.#addNavigationArrows(container, width, height);
+
     return this;
   }
 
@@ -204,12 +214,44 @@ export class CandleChart {
         gapIdx = i;
       }
     }
+    
+    // If no significant gap found, use middle of time domain (session boundary)
+    if (gapIdx < 0 || bestGap < 4 * 60 * 60 * 1000) { // less than 4 hours
+      const [d0, d1] = x.domain();
+      const midTime = new Date((d0.getTime() + d1.getTime()) / 2);
+      const tL = new Date(midTime.getTime() - 2 * 60 * 60 * 1000); // 2h before mid
+      const tR = new Date(midTime.getTime() + 2 * 60 * 60 * 1000); // 2h after mid
+      const xL = x(tL);
+      const xR = x(tR);
+      
+      if (Number.isFinite(xL) && Number.isFinite(xR)) {
+        const gapPx = xR - xL;
+        if (gapPx >= 60) {
+          // Use session gap
+          bestGap = 4 * 60 * 60 * 1000; // fake 4h gap
+          gapIdx = 0; // dummy index
+        }
+      }
+    }
+    
     if (gapIdx < 0) return;
 
-    const tL = visible[gapIdx - 1].date;
-    const tR = visible[gapIdx].date;
-    const xL = x(tL);
-    const xR = x(tR);
+    let tL, tR, xL, xR;
+    if (gapIdx > 0 && visible.length > gapIdx) {
+      // Data gap case
+      tL = visible[gapIdx - 1].date;
+      tR = visible[gapIdx].date;
+      xL = x(tL);
+      xR = x(tR);
+    } else {
+      // Session gap case
+      const [d0, d1] = x.domain();
+      const midTime = new Date((d0.getTime() + d1.getTime()) / 2);
+      tL = new Date(midTime.getTime() - 2 * 60 * 60 * 1000);
+      tR = new Date(midTime.getTime() + 2 * 60 * 60 * 1000);
+      xL = x(tL);
+      xR = x(tR);
+    }
     if (!Number.isFinite(xL) || !Number.isFinite(xR)) return;
 
     // require meaningful gap on screen
@@ -764,7 +806,9 @@ export class CandleChart {
     };
 
     const candidates = [];
-    for (const d0 of [day0 - DAY_MS, day0, day0 + DAY_MS]) {
+    // Generate more sessions to support navigation
+    for (let dayOffset = -5; dayOffset <= 2; dayOffset++) {
+      const d0 = day0 + dayOffset * DAY_MS;
       {
         const [s, e] = mk(d0, W.day.start, W.day.end);
         candidates.push({
@@ -788,8 +832,10 @@ export class CandleChart {
     candidates.sort((a, b) => a.coreStart - b.coreStart);
 
     const started = candidates.filter((s) => s.coreStart <= nowUtc);
-    const picked = started.slice(-W.sessions);
-    const sessions = picked.length ? picked : candidates.slice(-W.sessions);
+    const currentIdx = Math.max(0, started.length - W.sessions);
+    const targetIdx = Math.max(0, currentIdx + this.sessionOffset);
+    
+    const sessions = candidates.slice(targetIdx, targetIdx + W.sessions);
 
     const domMin = Math.min(...sessions.map((s) => s.start));
     const domMax = Math.max(...sessions.map((s) => s.end));
@@ -1007,5 +1053,87 @@ export class CandleChart {
 
     // USD/ozt = (CNY/g * g/ozt) / (CNY/USD)
     return (cnyPerGram * OZT) / fxCnyPerUsd;
+  }
+
+  #addNavigationArrows(container, width, height) {
+    // Add left and right navigation arrows
+    const leftArrow = document.createElement('div');
+    const rightArrow = document.createElement('div');
+    
+    const arrowStyle = `
+      position: absolute;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 40px;
+      height: 40px;
+      background: rgba(255,255,255,0.1);
+      border: 2px solid rgba(255,255,255,0.3);
+      border-radius: 50%;
+      cursor: pointer;
+      display: none;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      color: white;
+      user-select: none;
+      transition: all 0.2s ease;
+    `;
+    
+    leftArrow.style.cssText = arrowStyle + 'left: 10px;';
+    leftArrow.innerHTML = '‹';
+    leftArrow.onmouseenter = () => {
+      leftArrow.style.background = 'rgba(255,255,255,0.2)';
+      leftArrow.style.borderColor = 'rgba(255,255,255,0.5)';
+    };
+    leftArrow.onmouseleave = () => {
+      leftArrow.style.background = 'rgba(255,255,255,0.1)';
+      leftArrow.style.borderColor = 'rgba(255,255,255,0.3)';
+    };
+    leftArrow.onclick = () => {
+      this.sessionOffset--;
+      this.#requestData();
+      // Force re-render with current data  
+      this.render(this.lastOhlc);
+    };
+    
+    rightArrow.style.cssText = arrowStyle + 'right: 10px;';
+    rightArrow.innerHTML = '›';
+    rightArrow.onmouseenter = () => {
+      rightArrow.style.background = 'rgba(255,255,255,0.2)';
+      rightArrow.style.borderColor = 'rgba(255,255,255,0.5)';
+    };
+    rightArrow.onmouseleave = () => {
+      rightArrow.style.background = 'rgba(255,255,255,0.1)';
+      rightArrow.style.borderColor = 'rgba(255,255,255,0.3)';
+    };
+    rightArrow.onclick = () => {
+      this.sessionOffset = Math.min(0, this.sessionOffset + 1);
+      this.#requestData();
+      // Force re-render with current data
+      this.render(this.lastOhlc);
+    };
+    
+    container.style.position = 'relative';
+    container.appendChild(leftArrow);
+    container.appendChild(rightArrow);
+    
+    // Show arrows on hover
+    container.onmouseenter = () => {
+      leftArrow.style.display = 'flex';
+      if (this.sessionOffset < 0) {
+        rightArrow.style.display = 'flex';
+      }
+    };
+    container.onmouseleave = () => {
+      leftArrow.style.display = 'none';
+      rightArrow.style.display = 'none';
+    };
+  }
+
+  #requestData() {
+    if (this.priceStream) {
+      const offsetHours = Math.abs(this.sessionOffset) * 12;
+      this.priceStream.fetchOffset(offsetHours);
+    }
   }
 }
