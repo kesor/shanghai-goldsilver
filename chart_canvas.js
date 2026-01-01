@@ -758,12 +758,12 @@ export class CandleChart {
     if (firstSession.count > 0) {
       const cnyDecimals = this.metal === "silver" ? 0 : 2;
       const usdDecimals = this.metal === "silver" ? 2 : 2;
-      parts.push(`${firstSession.name} ${firstSession.date}: Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)}/$${firstSession.high.usd.toFixed(usdDecimals)} Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)}/$${firstSession.low.usd.toFixed(usdDecimals)}`);
+      parts.push(`${firstSession.name} ${firstSession.date}: Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)} $${firstSession.high.usd.toFixed(usdDecimals)} Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)} $${firstSession.low.usd.toFixed(usdDecimals)}`);
     }
     if (secondSession.count > 0) {
       const cnyDecimals = this.metal === "silver" ? 0 : 2;
       const usdDecimals = this.metal === "silver" ? 2 : 2;
-      parts.push(`${secondSession.name} ${secondSession.date}: Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)}/$${secondSession.high.usd.toFixed(usdDecimals)} Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)}/$${secondSession.low.usd.toFixed(usdDecimals)}`);
+      parts.push(`${secondSession.name} ${secondSession.date}: Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)} $${secondSession.high.usd.toFixed(usdDecimals)} Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)} $${secondSession.low.usd.toFixed(usdDecimals)}`);
     }
 
     return parts.join(" | ");
