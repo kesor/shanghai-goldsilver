@@ -749,7 +749,7 @@ export class CandleChart {
     
     // FX rate and OZT conversion
     const fxStr = Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0 ? fxCnyPerUsd.toFixed(4) : "n/a";
-    parts.push(`USDCNY ${fxStr} | 1oz = ${OZT.toFixed(1)}g`);
+    parts.push(`USDCNY ${fxStr} | 1ozt = ${OZT.toFixed(3)}g`);
     
     // Session stats in chronological order
     const sessionStats = this.#getSessionStats(visible, fxCnyPerUsd);
@@ -758,12 +758,12 @@ export class CandleChart {
     if (firstSession.count > 0) {
       const cnyDecimals = this.metal === "silver" ? 0 : 2;
       const usdDecimals = this.metal === "silver" ? 2 : 2;
-      parts.push(`${firstSession.name} ${firstSession.date}: Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)} $${firstSession.high.usd.toFixed(usdDecimals)} Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)} $${firstSession.low.usd.toFixed(usdDecimals)}`);
+      parts.push(`${firstSession.name} ${firstSession.date}: [Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)} $${firstSession.low.usd.toFixed(usdDecimals)}] [Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)} $${firstSession.high.usd.toFixed(usdDecimals)}]`);
     }
     if (secondSession.count > 0) {
       const cnyDecimals = this.metal === "silver" ? 0 : 2;
       const usdDecimals = this.metal === "silver" ? 2 : 2;
-      parts.push(`${secondSession.name} ${secondSession.date}: Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)} $${secondSession.high.usd.toFixed(usdDecimals)} Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)} $${secondSession.low.usd.toFixed(usdDecimals)}`);
+      parts.push(`${secondSession.name} ${secondSession.date}: [Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)} $${secondSession.low.usd.toFixed(usdDecimals)}] [Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)} $${secondSession.high.usd.toFixed(usdDecimals)}]`);
     }
 
     return parts.join(" | ");
