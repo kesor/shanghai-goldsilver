@@ -734,50 +734,128 @@ export class CandleChart {
   }
 
   #buildTitle(visible, fxCnyPerUsd) {
-    // Build chart title with price stats and FX rate
+    // Build comprehensive chart title with session details
     const base = this.title ?? "";
+    
+    if (!visible?.length) {
+      // Show session dates even without data
+      const [d0, d1] = this.#getCurrentSessionDates();
+      const nightDate = d0.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+      const dayDate = d1.toLocaleDateString('en-US', {month: 'short', day: 'numeric'});
+      return `${base} | Night ${nightDate} + Day ${dayDate} | No Data`;
+    }
 
-    if (!visible?.length) return base;
-
-    const t = this.titleOpts;
     const parts = [base];
-
-    const hi = d3.max(visible, (d) => d.high);
-    const lo = d3.min(visible, (d) => d.low);
-    const last = visible[visible.length - 1];
-
-    if (t.showFx) {
-      const fxStr =
-        Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0
-          ? fxCnyPerUsd.toFixed(4)
-          : "n/a";
-      parts.push(`FX ${fxStr}`);
+    
+    // FX rate and OZT conversion
+    const fxStr = Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0 ? fxCnyPerUsd.toFixed(4) : "n/a";
+    parts.push(`USDCNY ${fxStr} | 1oz = ${OZT.toFixed(1)}g`);
+    
+    // Session stats in chronological order
+    const sessionStats = this.#getSessionStats(visible, fxCnyPerUsd);
+    const [firstSession, secondSession] = this.#orderSessionsByTime(sessionStats);
+    
+    if (firstSession.count > 0) {
+      const cnyDecimals = this.metal === "silver" ? 0 : 2;
+      const usdDecimals = this.metal === "silver" ? 2 : 2;
+      parts.push(`${firstSession.name} ${firstSession.date}: Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)}/$${firstSession.high.usd.toFixed(usdDecimals)} Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)}/$${firstSession.low.usd.toFixed(usdDecimals)}`);
     }
-
-    if (t.showHiLo) {
-      const cnyDigits = t.cnyDigits ?? 0;
-      const usdDigits = t.usdDigits ?? 2;
-
-      const hiUsd = this.#cnyTickToUsdOzt(hi, fxCnyPerUsd);
-      const loUsd = this.#cnyTickToUsdOzt(lo, fxCnyPerUsd);
-
-      const hiUsdStr = Number.isFinite(hiUsd)
-        ? `$${hiUsd.toFixed(usdDigits)}`
-        : "—";
-      const loUsdStr = Number.isFinite(loUsd)
-        ? `$${loUsd.toFixed(usdDigits)}`
-        : "—";
-
-      parts.push(`Hi ¥${hi.toFixed(cnyDigits)} (${hiUsdStr})`);
-      parts.push(`Lo ¥${lo.toFixed(cnyDigits)} (${loUsdStr})`);
-    }
-
-    if (t.showLast) {
-      const lastStr = fmtTickShanghai(last.date);
-      parts.push(`Last ${lastStr}`);
+    if (secondSession.count > 0) {
+      const cnyDecimals = this.metal === "silver" ? 0 : 2;
+      const usdDecimals = this.metal === "silver" ? 2 : 2;
+      parts.push(`${secondSession.name} ${secondSession.date}: Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)}/$${secondSession.high.usd.toFixed(usdDecimals)} Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)}/$${secondSession.low.usd.toFixed(usdDecimals)}`);
     }
 
     return parts.join(" | ");
+  }
+
+  #getSessionStats(visible, fxCnyPerUsd) {
+    // Calculate highs/lows for each session with USD conversion
+    if (!visible.length) return { first: {name: "N/A", count: 0}, second: {name: "N/A", count: 0} };
+    
+    // Find the actual session boundary by looking for the largest time gap
+    let maxGap = 0;
+    let splitIdx = Math.floor(visible.length / 2); // fallback
+    
+    for (let i = 1; i < visible.length; i++) {
+      const gap = visible[i].date.getTime() - visible[i-1].date.getTime();
+      if (gap > maxGap) {
+        maxGap = gap;
+        splitIdx = i;
+      }
+    }
+    
+    const firstSession = { 
+      name: "Session1",
+      date: visible[0]?.date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'}) || "N/A",
+      high: { cny: -Infinity, usd: -Infinity }, 
+      low: { cny: Infinity, usd: Infinity }, 
+      count: 0,
+      startTime: 0
+    };
+    const secondSession = { 
+      name: "Session2",
+      date: visible[splitIdx]?.date.toLocaleDateString('en-US', {month: 'short', day: 'numeric'}) || "N/A",
+      high: { cny: -Infinity, usd: -Infinity }, 
+      low: { cny: Infinity, usd: Infinity }, 
+      count: 0,
+      startTime: 1
+    };
+    
+    // Determine session names based on time of day
+    const [domainStart] = this.#buildX(800).domain();
+    const firstHour = domainStart.getHours();
+    
+    if (firstHour >= 6 && firstHour < 18) {
+      // Day session comes first
+      secondSession.name = "Day";
+      firstSession.name = "Night";
+    } else {
+      // Night session comes first
+      secondSession.name = "Night";
+      firstSession.name = "Day";
+    }
+    
+    // First session = before the gap
+    for (let i = 0; i < splitIdx; i++) {
+      const d = visible[i];
+      if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
+        firstSession.high.cny = Math.max(firstSession.high.cny, d.high);
+        firstSession.low.cny = Math.min(firstSession.low.cny, d.low);
+        const highUsd = this.#cnyTickToUsdOzt(d.high, fxCnyPerUsd);
+        const lowUsd = this.#cnyTickToUsdOzt(d.low, fxCnyPerUsd);
+        if (Number.isFinite(highUsd)) firstSession.high.usd = Math.max(firstSession.high.usd, highUsd);
+        if (Number.isFinite(lowUsd)) firstSession.low.usd = Math.min(firstSession.low.usd, lowUsd);
+        firstSession.count++;
+      }
+    }
+    
+    // Second session = after the gap
+    for (let i = splitIdx; i < visible.length; i++) {
+      const d = visible[i];
+      if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
+        secondSession.high.cny = Math.max(secondSession.high.cny, d.high);
+        secondSession.low.cny = Math.min(secondSession.low.cny, d.low);
+        const highUsd = this.#cnyTickToUsdOzt(d.high, fxCnyPerUsd);
+        const lowUsd = this.#cnyTickToUsdOzt(d.low, fxCnyPerUsd);
+        if (Number.isFinite(highUsd)) secondSession.high.usd = Math.max(secondSession.high.usd, highUsd);
+        if (Number.isFinite(lowUsd)) secondSession.low.usd = Math.min(secondSession.low.usd, lowUsd);
+        secondSession.count++;
+      }
+    }
+    
+    return { first: firstSession, second: secondSession };
+  }
+
+  #orderSessionsByTime(sessionStats) {
+    // Return sessions in chart order (first = left, second = right)
+    return [sessionStats.first, sessionStats.second];
+  }
+
+  #getCurrentSessionDates() {
+    // Get current session date range from X scale
+    const [d0, d1] = this.#buildX(800).domain(); // Use dummy width
+    return [d0, d1];
   }
 
   // ------------------------
