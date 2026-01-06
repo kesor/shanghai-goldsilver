@@ -1,6 +1,7 @@
 import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 import { fmtTickShanghai } from "./axis_fmt.js";
 import { drawShanghaiSessions } from "./sessions.js";
+import { createOHLC } from "./candles.js";
 import { HOUR_MS, DAY_MS, OZT } from "./consts.js";
 import { shanghaiMidnightUtcMs, shanghaiTimeUtcMs } from "./time_shanghai.js";
 
@@ -1170,8 +1171,6 @@ export class CandleChart {
     leftArrow.onclick = () => {
       this.sessionOffset--;
       this.#requestData();
-      // Force re-render with current data  
-      this.render(this.lastOhlc);
     };
     
     rightArrow.style.cssText = arrowStyle + 'right: 10px;';
@@ -1187,8 +1186,6 @@ export class CandleChart {
     rightArrow.onclick = () => {
       this.sessionOffset = Math.min(0, this.sessionOffset + 1);
       this.#requestData();
-      // Force re-render with current data
-      this.render(this.lastOhlc);
     };
     
     container.style.position = 'relative';
@@ -1209,9 +1206,23 @@ export class CandleChart {
   }
 
   #requestData() {
-    if (this.priceStream) {
-      const offsetHours = Math.abs(this.sessionOffset) * 12;
-      this.priceStream.fetchOffset(offsetHours);
+    if (this.priceStream && this.priceStream.ws && this.priceStream.ws.readyState === WebSocket.OPEN) {
+      // Calculate the actual time range that will be displayed
+      const [domainStart, domainEnd] = this.#buildX(800).domain();
+      const startTime = domainStart.getTime();
+      const endTime = domainEnd.getTime();
+      
+      // Convert to hours offset from now
+      const nowUtc = Date.now();
+      const startOffsetHours = Math.max(0, Math.ceil((nowUtc - startTime) / (60 * 60 * 1000)));
+      const endOffsetHours = Math.max(0, Math.ceil((nowUtc - endTime) / (60 * 60 * 1000)));
+      
+      this.priceStream.ws.send(JSON.stringify({
+        type: "fetch",
+        start_offset_hours: startOffsetHours,
+        end_offset_hours: endOffsetHours,
+        metal: this.metal
+      }));
     }
   }
 }

@@ -36,6 +36,102 @@ class DataServer:
         """Remove WebSocket client from active clients set."""
         self.clients.discard(ws)
 
+    def _fetch_payload_for_time_range(self, start_offset_hours: int, end_offset_hours: int, metal: str) -> str:
+        """Return JSON string for specific metal and time range: { metal: [...] }"""
+        out: Dict[str, list] = {metal: []}
+
+        try:
+            conn = sqlite3.connect(self.cfg.db_path)
+            conn.row_factory = sqlite3.Row
+
+            sql = """
+        SELECT timestamp, price_cny, usd_cny_rate
+        FROM prices
+        WHERE metal = ?
+          AND datetime(timestamp) >= datetime('now', ?)
+          AND datetime(timestamp) <= datetime('now', ?)
+        ORDER BY datetime(timestamp)
+      """
+            start_offset = f"-{int(start_offset_hours)} hours"
+            end_offset = f"-{int(end_offset_hours)} hours"
+            
+            rows = conn.execute(sql, (metal, start_offset, end_offset)).fetchall()
+            out[metal] = [
+                {
+                    "timestamp": r["timestamp"],
+                    "price_cny": r["price_cny"],
+                    "usd_cny_rate": r["usd_cny_rate"],
+                }
+                for r in rows
+            ]
+
+            conn.close()
+
+        except Exception as e:
+            print(f"DB read error: {e}")
+
+        return json.dumps(out, separators=(",", ":"), ensure_ascii=False)
+
+    def _fetch_payload_for_metal(self, offset_hours: int, metal: str) -> str:
+        """Return JSON string for specific metal: { metal: [...] }"""
+        out: Dict[str, list] = {metal: []}
+
+        try:
+            conn = sqlite3.connect(self.cfg.db_path)
+            conn.row_factory = sqlite3.Row
+
+            if offset_hours == 0:
+                # Live data - need enough history for both night and day sessions
+                sql = """
+            SELECT timestamp, price_cny, usd_cny_rate
+            FROM prices
+            WHERE metal = ?
+              AND datetime(timestamp) >= datetime('now', ?)
+            ORDER BY datetime(timestamp)
+          """
+                lookback = "-36 hours"  # Ensure we get both sessions
+                
+                rows = conn.execute(sql, (metal, lookback)).fetchall()
+                out[metal] = [
+                    {
+                        "timestamp": r["timestamp"],
+                        "price_cny": r["price_cny"],
+                        "usd_cny_rate": r["usd_cny_rate"],
+                    }
+                    for r in rows
+                ]
+            else:
+                # Historical data - 36 hour window
+                sql = """
+            SELECT timestamp, price_cny, usd_cny_rate
+            FROM prices
+            WHERE metal = ?
+              AND datetime(timestamp) >= datetime('now', ?)
+              AND datetime(timestamp) < datetime('now', ?)
+            ORDER BY datetime(timestamp)
+          """
+                start_offset = f"-{int(36 + offset_hours)} hours"
+                end_offset = f"-{offset_hours} hours"
+                
+                rows = conn.execute(sql, (metal, start_offset, end_offset)).fetchall()
+                out[metal] = [
+                    {
+                        "timestamp": r["timestamp"],
+                        "price_cny": r["price_cny"],
+                        "usd_cny_rate": r["usd_cny_rate"],
+                    }
+                    for r in rows
+                ]
+                
+                out["_offset"] = offset_hours
+
+            conn.close()
+
+        except Exception as e:
+            print(f"DB read error: {e}")
+
+        return json.dumps(out, separators=(",", ":"), ensure_ascii=False)
+
     def _fetch_payload(self, offset_hours: int = 0) -> str:
         """Return JSON string: { gold: [...], silver: [...] }"""
         out: Dict[str, list] = {"gold": [], "silver": []}
@@ -45,7 +141,7 @@ class DataServer:
             conn.row_factory = sqlite3.Row
 
             if offset_hours == 0:
-                # Live data - recent hours only
+                # Live data - need enough history for both night and day sessions
                 sql = """
             SELECT timestamp, price_cny, usd_cny_rate
             FROM prices
@@ -53,7 +149,7 @@ class DataServer:
               AND datetime(timestamp) >= datetime('now', ?)
             ORDER BY datetime(timestamp)
           """
-                lookback = f"-{int(self.cfg.lookback_hours)} hours"
+                lookback = "-36 hours"  # Ensure we get both sessions
                 
                 for metal in ("gold", "silver"):
                     rows = conn.execute(sql, (metal, lookback)).fetchall()
@@ -125,8 +221,23 @@ class DataServer:
             async for message in ws:
                 try:
                     req = json.loads(message)
-                    if req.get("type") == "fetch" and "offset_hours" in req:
-                        payload = self._fetch_payload(req["offset_hours"])
+                    if req.get("type") == "fetch":
+                        metal = req.get("metal")
+                        if "start_offset_hours" in req and "end_offset_hours" in req:
+                            # New precise time range request
+                            payload = self._fetch_payload_for_time_range(
+                                req["start_offset_hours"], 
+                                req["end_offset_hours"], 
+                                metal
+                            )
+                        elif "offset_hours" in req:
+                            # Legacy offset request
+                            if metal:
+                                payload = self._fetch_payload_for_metal(req["offset_hours"], metal)
+                            else:
+                                payload = self._fetch_payload(req["offset_hours"])
+                        else:
+                            continue
                         await ws.send(payload)
                 except Exception as e:
                     print(f"Message error: {e}")
