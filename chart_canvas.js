@@ -3,6 +3,7 @@ import { fmtTickShanghai } from "./axis_fmt.js";
 import { drawShanghaiSessions } from "./sessions.js";
 import { createOHLC } from "./candles.js";
 import { HoverIndicator } from "./hover_indicator.js";
+import { buildXScale, buildYScale } from "./chart_scales.js";
 import { HOUR_MS, DAY_MS, OZT } from "./consts.js";
 import { shanghaiMidnightUtcMs, shanghaiTimeUtcMs } from "./time_shanghai.js";
 
@@ -121,7 +122,7 @@ export class CandleChart {
     };
 
     // windowed x
-    const x = this.#buildX(width);
+    const x = buildXScale(width, this.margin, this.window, this.sessionOffset);
 
     let visible = [];
     let fx = NaN;
@@ -144,7 +145,7 @@ export class CandleChart {
     this.#setTitle(container, this.#buildTitle(visible, fx));
 
     // still render axes/sessions even if no points in the window
-    const y = this.#buildY(visible, plot);
+    const y = buildYScale(visible, plot, this.yPadPct, this.yPadMin);
 
     this.#ensureCanvas(container, width, height);
     const ctx = this.ctx;
@@ -879,7 +880,7 @@ export class CandleChart {
     };
     
     // Determine session names based on time of day
-    const [domainStart] = this.#buildX(800).domain();
+    const [domainStart] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
     const firstHour = domainStart.getHours();
     
     if (firstHour >= 6 && firstHour < 18) {
@@ -930,95 +931,8 @@ export class CandleChart {
 
   #getCurrentSessionDates() {
     // Get current session date range from X scale
-    const [d0, d1] = this.#buildX(800).domain(); // Use dummy width
+    const [d0, d1] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
     return [d0, d1];
-  }
-
-  // ------------------------
-  // scales
-  // ------------------------
-
-  #buildX(width) {
-    // Build X scale for time axis with session windowing
-    const m = this.margin;
-    const W = this.window;
-
-    const nowUtc = Date.now();
-    const day0 = shanghaiMidnightUtcMs(nowUtc);
-
-    const mk = (baseDay0, startHM, endHM) => {
-      const [sh, sm] = startHM;
-      const [eh, em] = endHM;
-
-      const start = shanghaiTimeUtcMs(baseDay0, sh, sm);
-
-      let endBase = baseDay0;
-      if (eh < sh || (eh === sh && em < sm)) endBase = baseDay0 + DAY_MS;
-      const end = shanghaiTimeUtcMs(endBase, eh, em);
-
-      return [start, end];
-    };
-
-    const candidates = [];
-    // Generate more sessions to support navigation
-    for (let dayOffset = -5; dayOffset <= 2; dayOffset++) {
-      const d0 = day0 + dayOffset * DAY_MS;
-      {
-        const [s, e] = mk(d0, W.day.start, W.day.end);
-        candidates.push({
-          name: "day",
-          start: s - W.day.padLeftH * HOUR_MS,
-          end: e + W.day.padRightH * HOUR_MS,
-          coreStart: s,
-        });
-      }
-      {
-        const [s, e] = mk(d0, W.night.start, W.night.end);
-        candidates.push({
-          name: "night",
-          start: s - W.night.padLeftH * HOUR_MS,
-          end: e + W.night.padRightH * HOUR_MS,
-          coreStart: s,
-        });
-      }
-    }
-
-    candidates.sort((a, b) => a.coreStart - b.coreStart);
-
-    const started = candidates.filter((s) => s.coreStart <= nowUtc);
-    const currentIdx = Math.max(0, started.length - W.sessions);
-    const targetIdx = Math.max(0, currentIdx + this.sessionOffset);
-    
-    const sessions = candidates.slice(targetIdx, targetIdx + W.sessions);
-
-    const domMin = Math.min(...sessions.map((s) => s.start));
-    const domMax = Math.max(...sessions.map((s) => s.end));
-
-    return d3
-      .scaleTime()
-      .domain([new Date(domMin), new Date(domMax)])
-      .range([m.left, width - m.right]);
-  }
-
-  #buildY(visible, plot) {
-    // Build Y scale for price axis with padding
-    // if empty, pick a dummy domain to keep axes stable
-    let yMin = 0;
-    let yMax = 1;
-
-    if (visible?.length) {
-      yMin = d3.min(visible, (d) => d.low);
-      yMax = d3.max(visible, (d) => d.high);
-    }
-
-    const span = Math.max(1e-9, yMax - yMin);
-    const pad = Math.max(this.yPadMin, span * this.yPadPct);
-
-    return d3
-      .scaleLinear()
-      .domain([yMin - pad, yMax + pad])
-      .nice()
-      .range([plot.bottom, plot.top]);
   }
 
   // ------------------------
@@ -1321,7 +1235,7 @@ export class CandleChart {
   #requestData() {
     if (this.priceStream && this.priceStream.ws && this.priceStream.ws.readyState === WebSocket.OPEN) {
       // Calculate the actual time range that will be displayed
-      const [domainStart, domainEnd] = this.#buildX(800).domain();
+      const [domainStart, domainEnd] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
       const startTime = domainStart.getTime();
       const endTime = domainEnd.getTime();
       
@@ -1341,7 +1255,7 @@ export class CandleChart {
 
   _buildXScale(width) {
     // Expose the X scale building method for hover indicator
-    return this.#buildX(width);
+    return buildXScale(width, this.margin, this.window, this.sessionOffset);
   }
 
   _cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
