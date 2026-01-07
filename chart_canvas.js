@@ -151,7 +151,7 @@ export class CandleChart {
     ctx.clearRect(0, 0, width, height);
 
     // Draw title and stats on canvas
-    this.#drawTitleOnCanvas(ctx, width, visible, fx);
+    this.#drawTitleOnCanvas(ctx, width, visible, fx, plot);
 
     // sessions shading across full x-domain
     this.#clipPlot(plot);
@@ -752,7 +752,7 @@ export class CandleChart {
     }
   }
 
-  #drawTitleOnCanvas(ctx, width, visible, fxCnyPerUsd) {
+  #drawTitleOnCanvas(ctx, width, visible, fxCnyPerUsd, plot) {
     ctx.save();
     ctx.fillStyle = 'white';
     ctx.textAlign = 'left';
@@ -761,7 +761,7 @@ export class CandleChart {
     // Main title with larger font
     ctx.font = 'bold 16px Arial';
     const titleText = this.#buildTitle(visible, fxCnyPerUsd);
-    ctx.fillText(titleText, 10, 10);
+    ctx.fillText(titleText, plot.left, 10);
     
     // Recent candle details on second line - all white
     if (visible.length > 0) {
@@ -786,7 +786,7 @@ export class CandleChart {
         `Session: ${change >= 0 ? '+' : ''}¥${change.toFixed(digits)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`
       ].filter(part => part).join(' | ');
       
-      ctx.fillText(recentStats, 10, 32);
+      ctx.fillText(recentStats, plot.left, 32);
     }
     
     ctx.restore();
