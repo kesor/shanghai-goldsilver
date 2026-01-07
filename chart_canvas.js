@@ -14,7 +14,7 @@ export class CandleChart {
     this.metal = opts.metal ?? "gold"; // "gold" | "silver"
     this.unit = opts.unit ?? "CNY/g"; // "CNY/g" | "CNY/kg"
 
-    this.margin = opts.margin ?? { top: 20, right: 120, bottom: 30, left: 90 };
+    this.margin = opts.margin ?? { top: 60, right: 120, bottom: 30, left: 90 };
     
     // Session navigation
     this.sessionOffset = 0; // 0 = current sessions, -1 = previous, etc.
@@ -146,6 +146,9 @@ export class CandleChart {
     this.#ensureCanvas(container, width, height);
     const ctx = this.ctx;
     ctx.clearRect(0, 0, width, height);
+
+    // Draw title and stats on canvas
+    this.#drawTitleOnCanvas(ctx, width, visible, fx);
 
     // sessions shading across full x-domain
     this.#clipPlot(plot);
@@ -739,12 +742,68 @@ export class CandleChart {
   // ------------------------
 
   #setTitle(container, text) {
-    // Create and append title element to container
-    const h2 = document.createElement("h2");
-    h2.style.color = "white";
-    h2.style.margin = "0 0 10px 0";
-    h2.textContent = text ?? "";
-    container.appendChild(h2);
+    // Title is now drawn on canvas, so clear any HTML title
+    const existingTitle = container.querySelector('h2');
+    if (existingTitle) {
+      existingTitle.remove();
+    }
+  }
+
+  #drawTitleOnCanvas(ctx, width, visible, fxCnyPerUsd) {
+    ctx.save();
+    ctx.fillStyle = 'white';
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    
+    // Main title with larger font
+    ctx.font = 'bold 16px Arial';
+    const titleText = this.#buildTitle(visible, fxCnyPerUsd);
+    ctx.fillText(titleText, 10, 10);
+    
+    // Recent candle details on second line - all white
+    if (visible.length > 0) {
+      ctx.font = '14px Arial';
+      const recent = visible[visible.length - 1];
+      const sessionStart = this.#findSessionStart(visible, recent);
+      const sessionStartPrice = sessionStart ? sessionStart.open : recent.open;
+      const change = recent.close - sessionStartPrice;
+      const changePercent = sessionStartPrice !== 0 ? (change / sessionStartPrice * 100) : 0;
+      
+      const digits = this.unit === "CNY/g" ? 2 : 0;
+      const usdDigits = this.metal === "gold" ? 0 : 2;
+      const usdPrice = this.#cnyTickToUsdOzt(recent.close, fxCnyPerUsd);
+      
+      const recentStats = [
+        `Latest: ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}`,
+        `O:¥${recent.open.toFixed(digits)}`,
+        `H:¥${recent.high.toFixed(digits)}`,
+        `L:¥${recent.low.toFixed(digits)}`,
+        `C:¥${recent.close.toFixed(digits)}`,
+        Number.isFinite(usdPrice) ? `$${usdPrice.toFixed(usdDigits)}/ozt` : '',
+        `Session: ${change >= 0 ? '+' : ''}¥${change.toFixed(digits)} (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)`
+      ].filter(part => part).join(' | ');
+      
+      ctx.fillText(recentStats, 10, 32);
+    }
+    
+    ctx.restore();
+  }
+
+  #findSessionStart(visible, currentCandle) {
+    // Find the start of the current session by looking for the largest time gap before current candle
+    let maxGap = 0;
+    let sessionStartIdx = 0;
+    
+    for (let i = 1; i < visible.length; i++) {
+      const gap = visible[i].date.getTime() - visible[i-1].date.getTime();
+      if (gap > maxGap && visible[i].date <= currentCandle.date) {
+        maxGap = gap;
+        sessionStartIdx = i;
+      }
+    }
+    
+    // If gap is significant (>2 hours), use it as session boundary
+    return maxGap > 2 * 60 * 60 * 1000 ? visible[sessionStartIdx] : visible[0];
   }
 
   #buildTitle(visible, fxCnyPerUsd) {
