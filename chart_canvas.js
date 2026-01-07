@@ -2,6 +2,7 @@ import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
 import { fmtTickShanghai } from "./axis_fmt.js";
 import { drawShanghaiSessions } from "./sessions.js";
 import { createOHLC } from "./candles.js";
+import { HoverIndicator } from "./hover_indicator.js";
 import { HOUR_MS, DAY_MS, OZT } from "./consts.js";
 import { shanghaiMidnightUtcMs, shanghaiTimeUtcMs } from "./time_shanghai.js";
 
@@ -84,6 +85,7 @@ export class CandleChart {
 
     this.canvas = null;
     this.ctx = null;
+    this.hoverIndicator = null;
   }
 
   setTitle(title) {
@@ -179,6 +181,17 @@ export class CandleChart {
 
     // Add navigation arrows
     this.#addNavigationArrows(container, width, height);
+
+    // Update hover indicator base image if it exists
+    if (this.hoverIndicator) {
+      this.hoverIndicator.updateBaseImage();
+    } else if (visible.length > 0) {
+      // Enable hover indicator only after we have data to display
+      this.hoverIndicator = new HoverIndicator(this);
+      setTimeout(() => {
+        this.hoverIndicator.enable();
+      }, 50);
+    }
 
     return this;
   }
@@ -968,7 +981,7 @@ export class CandleChart {
     this.canvas.style.height = `${height}px`;
     this.canvas.style.background = "#000";
 
-    this.ctx = this.canvas.getContext("2d");
+    this.ctx = this.canvas.getContext("2d", { willReadFrequently: true });
     this.ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   }
 
@@ -1156,6 +1169,8 @@ export class CandleChart {
       color: white;
       user-select: none;
       transition: all 0.2s ease;
+      pointer-events: none;
+      z-index: 10;
     `;
     
     leftArrow.style.cssText = arrowStyle + 'left: 10px;';
@@ -1192,16 +1207,52 @@ export class CandleChart {
     container.appendChild(leftArrow);
     container.appendChild(rightArrow);
     
-    // Show arrows on hover
-    container.onmouseenter = () => {
-      leftArrow.style.display = 'flex';
-      if (this.sessionOffset < 0) {
+    // Show arrows on hover, but don't block canvas events
+    container.onmouseenter = (e) => {
+      // Only show arrows if mouse is near the edges
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const nearLeftEdge = x < 60;
+      const nearRightEdge = x > rect.width - 60;
+      
+      if (nearLeftEdge) {
+        leftArrow.style.display = 'flex';
+        leftArrow.style.pointerEvents = 'auto';
+      }
+      if (nearRightEdge && this.sessionOffset < 0) {
         rightArrow.style.display = 'flex';
+        rightArrow.style.pointerEvents = 'auto';
       }
     };
     container.onmouseleave = () => {
       leftArrow.style.display = 'none';
+      leftArrow.style.pointerEvents = 'none';
       rightArrow.style.display = 'none';
+      rightArrow.style.pointerEvents = 'none';
+    };
+    
+    // Add mousemove to container to handle arrow visibility
+    container.onmousemove = (e) => {
+      const rect = container.getBoundingClientRect();
+      const x = e.clientX - rect.left;
+      const nearLeftEdge = x < 60;
+      const nearRightEdge = x > rect.width - 60;
+      
+      if (nearLeftEdge) {
+        leftArrow.style.display = 'flex';
+        leftArrow.style.pointerEvents = 'auto';
+      } else {
+        leftArrow.style.display = 'none';
+        leftArrow.style.pointerEvents = 'none';
+      }
+      
+      if (nearRightEdge && this.sessionOffset < 0) {
+        rightArrow.style.display = 'flex';
+        rightArrow.style.pointerEvents = 'auto';
+      } else {
+        rightArrow.style.display = 'none';
+        rightArrow.style.pointerEvents = 'none';
+      }
     };
   }
 
@@ -1224,5 +1275,10 @@ export class CandleChart {
         metal: this.metal
       }));
     }
+  }
+
+  _buildXScale(width) {
+    // Expose the X scale building method for hover indicator
+    return this.#buildX(width);
   }
 }
