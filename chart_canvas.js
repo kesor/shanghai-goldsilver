@@ -187,7 +187,8 @@ export class CandleChart {
 
     // Update hover indicator base image if it exists
     if (this.hoverIndicator) {
-      this.hoverIndicator.updateBaseImage();
+      // Clear the base image so it gets recreated fresh after the new render
+      this.hoverIndicator.baseImageData = null;
     } else if (visible.length > 0) {
       // Enable hover indicator only after we have data to display
       this.hoverIndicator = new HoverIndicator(this);
@@ -774,7 +775,7 @@ export class CandleChart {
       const usdPrice = this.#cnyTickToUsdOzt(recent.close, fxCnyPerUsd);
       
       const recentStats = [
-        `Latest: ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})}`,
+        `Latest: ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai'})} SH | ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})} Local`,
         `O:¥${recent.open.toFixed(digits)}`,
         `H:¥${recent.high.toFixed(digits)}`,
         `L:¥${recent.low.toFixed(digits)}`,

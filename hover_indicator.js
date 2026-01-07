@@ -85,10 +85,22 @@ export class HoverIndicator {
     this.crosshair.x = x;
     this.crosshair.y = y;
     
+    // Store clean canvas state if we don't have it
+    if (!this.baseImageData) {
+      this.storeBaseImage();
+    }
+    
     const candle = this.findCandleAtX(x);
     
-    // Always restore base image first to clear previous crosshair
-    this.restoreBaseImage();
+    // Try to restore base image, if it fails, recreate it
+    try {
+      this.restoreBaseImage();
+    } catch (e) {
+      // Base image is corrupted, recreate it
+      this.baseImageData = null;
+      this.storeBaseImage();
+      this.restoreBaseImage();
+    }
     
     if (candle) {
       this.currentCandle = candle;
@@ -101,9 +113,12 @@ export class HoverIndicator {
   }
 
   handleMouseEnter(event) {
-    // Refresh base image when re-entering canvas
-    this.updateBaseImage();
-    this.storeBaseImage();
+    // Just clear the base image - it will be recreated fresh on first mouse move
+    this.baseImageData = null;
+    this.crosshair.x = null;
+    this.crosshair.y = null;
+    this.currentCandle = null;
+    this.hideTooltip();
   }
 
   handleDocumentMouseMove(event) {
@@ -119,6 +134,11 @@ export class HoverIndicator {
     if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
       if (this.currentCandle || this.crosshair.x !== null) {
         this.handleMouseLeave();
+      }
+    } else {
+      // Mouse is back over canvas - ensure we have a fresh base image
+      if (!this.baseImageData && (this.currentCandle || this.crosshair.x !== null)) {
+        this.storeBaseImage();
       }
     }
   }
@@ -146,11 +166,11 @@ export class HoverIndicator {
 
   restoreBaseImage() {
     const ctx = this.chart.ctx;
-    if (!ctx || !this.baseImageData) {
-      // If no base image, try to store it now
-      if (!this.baseImageData) {
-        this.storeBaseImage();
-      }
+    if (!ctx) return;
+    
+    if (!this.baseImageData) {
+      // No base image - store current state
+      this.storeBaseImage();
       return;
     }
     
@@ -158,7 +178,7 @@ export class HoverIndicator {
       ctx.putImageData(this.baseImageData, 0, 0);
     } catch (e) {
       console.warn('Could not restore canvas image data:', e);
-      // Try to re-store base image
+      // Base image is corrupted - clear it and store fresh one
       this.baseImageData = null;
       this.storeBaseImage();
     }
@@ -212,8 +232,15 @@ export class HoverIndicator {
       <div style="margin-bottom: 4px; font-weight: bold;">
         ${candle.date.toLocaleString('en-US', {
           month: 'short', day: 'numeric', 
+          hour: '2-digit', minute: '2-digit',
+          timeZone: 'Asia/Shanghai'
+        })} SH
+      </div>
+      <div style="margin-bottom: 4px; font-size: 11px; color: #ccc;">
+        ${candle.date.toLocaleString('en-US', {
+          month: 'short', day: 'numeric', 
           hour: '2-digit', minute: '2-digit'
-        })}
+        })} Local
       </div>
       <div>O: ¥${candle.open.toFixed(digits)}</div>
       <div>H: ¥${candle.high.toFixed(digits)}</div>
