@@ -5,9 +5,6 @@ export class HoverIndicator {
     this.crosshair = { x: null, y: null };
     this.currentCandle = null;
     this.isActive = false;
-    this.baseImageData = null;
-    this.throttleTimeout = null;
-    this.lastUpdateTime = 0;
   }
 
   enable() {
@@ -15,28 +12,13 @@ export class HoverIndicator {
     this.isActive = true;
     
     const canvas = this.chart.canvas;
-    if (!canvas) {
-      console.warn('HoverIndicator: No canvas found');
-      return;
-    }
+    if (!canvas) return;
 
-    // Store base image once when enabling
-    setTimeout(() => {
-      this.storeBaseImage();
-    }, 50);
-
-    // Use arrow functions to preserve 'this' context
     this.mouseMoveHandler = (event) => this.handleMouseMove(event);
     this.mouseLeaveHandler = (event) => this.handleMouseLeave(event);
-    this.mouseEnterHandler = (event) => this.handleMouseEnter(event);
     
     canvas.addEventListener('mousemove', this.mouseMoveHandler);
     canvas.addEventListener('mouseleave', this.mouseLeaveHandler);
-    canvas.addEventListener('mouseenter', this.mouseEnterHandler);
-    
-    // Also listen on document for mouse leave detection
-    this.documentMouseMoveHandler = (event) => this.handleDocumentMouseMove(event);
-    document.addEventListener('mousemove', this.documentMouseMoveHandler);
     
     this.createTooltip();
   }
@@ -49,12 +31,41 @@ export class HoverIndicator {
     if (canvas) {
       canvas.removeEventListener('mousemove', this.mouseMoveHandler);
       canvas.removeEventListener('mouseleave', this.mouseLeaveHandler);
-      canvas.removeEventListener('mouseenter', this.mouseEnterHandler);
     }
     
-    document.removeEventListener('mousemove', this.documentMouseMoveHandler);
-    
     this.hideTooltip();
+  }
+
+  handleMouseMove(event) {
+    const rect = this.chart.canvas.getBoundingClientRect();
+    const x = event.clientX - rect.left;
+    const y = event.clientY - rect.top;
+    
+    this.crosshair.x = x;
+    this.crosshair.y = y;
+    
+    const candle = this.findCandleAtX(x);
+    
+    // Re-render chart with crosshair overlay
+    this.chart.render(this.chart.lastOhlc);
+    
+    if (candle) {
+      this.currentCandle = candle;
+      this.showTooltip(event.clientX, event.clientY, candle);
+      this.drawCrosshair();
+    } else {
+      this.hideTooltip();
+      this.currentCandle = null;
+    }
+  }
+
+  handleMouseLeave() {
+    this.hideTooltip();
+    this.currentCandle = null;
+    this.crosshair.x = null;
+    this.crosshair.y = null;
+    // Re-render chart without crosshair
+    this.chart.render(this.chart.lastOhlc);
   }
 
   createTooltip() {
@@ -77,148 +88,6 @@ export class HoverIndicator {
     document.body.appendChild(this.tooltip);
   }
 
-  handleMouseMove(event) {
-    const rect = this.chart.canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    this.crosshair.x = x;
-    this.crosshair.y = y;
-    
-    // Store clean canvas state if we don't have it
-    if (!this.baseImageData) {
-      this.storeBaseImage();
-    }
-    
-    const candle = this.findCandleAtX(x);
-    
-    // Try to restore base image, if it fails, recreate it
-    try {
-      this.restoreBaseImage();
-    } catch (e) {
-      // Base image is corrupted, recreate it
-      this.baseImageData = null;
-      this.storeBaseImage();
-      this.restoreBaseImage();
-    }
-    
-    if (candle) {
-      this.currentCandle = candle;
-      this.showTooltip(event.clientX, event.clientY, candle);
-      this.drawCrosshair();
-    } else {
-      this.hideTooltip();
-      this.currentCandle = null;
-    }
-  }
-
-  handleMouseEnter(event) {
-    // Just clear the base image - it will be recreated fresh on first mouse move
-    this.baseImageData = null;
-    this.crosshair.x = null;
-    this.crosshair.y = null;
-    this.currentCandle = null;
-    this.hideTooltip();
-  }
-
-  handleDocumentMouseMove(event) {
-    // Check if mouse is still over canvas
-    const canvas = this.chart.canvas;
-    if (!canvas) return;
-    
-    const rect = canvas.getBoundingClientRect();
-    const x = event.clientX - rect.left;
-    const y = event.clientY - rect.top;
-    
-    // If mouse is outside canvas bounds, clean up
-    if (x < 0 || y < 0 || x > rect.width || y > rect.height) {
-      if (this.currentCandle || this.crosshair.x !== null) {
-        this.handleMouseLeave();
-      }
-    } else {
-      // Mouse is back over canvas - ensure we have a fresh base image
-      if (!this.baseImageData && (this.currentCandle || this.crosshair.x !== null)) {
-        this.storeBaseImage();
-      }
-    }
-  }
-
-  handleMouseLeave() {
-    this.hideTooltip();
-    this.currentCandle = null;
-    this.crosshair.x = null;
-    this.crosshair.y = null;
-    // Restore clean canvas state
-    this.restoreBaseImage();
-  }
-
-  storeBaseImage() {
-    const ctx = this.chart.ctx;
-    const canvas = this.chart.canvas;
-    if (!ctx || !canvas) return;
-    
-    try {
-      this.baseImageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
-    } catch (e) {
-      console.warn('Could not store canvas image data:', e);
-    }
-  }
-
-  restoreBaseImage() {
-    const ctx = this.chart.ctx;
-    if (!ctx) return;
-    
-    if (!this.baseImageData) {
-      // No base image - store current state
-      this.storeBaseImage();
-      return;
-    }
-    
-    try {
-      ctx.putImageData(this.baseImageData, 0, 0);
-    } catch (e) {
-      console.warn('Could not restore canvas image data:', e);
-      // Base image is corrupted - clear it and store fresh one
-      this.baseImageData = null;
-      this.storeBaseImage();
-    }
-  }
-
-  // Call this when chart is re-rendered to update stored image
-  updateBaseImage() {
-    this.baseImageData = null;
-  }
-
-  findCandleAtX(mouseX) {
-    const ohlc = this.chart.lastOhlc;
-    if (!ohlc || !ohlc.length) return null;
-    
-    // Rebuild the X scale to match chart's current scale
-    const canvas = this.chart.canvas;
-    if (!canvas) return null;
-    
-    const width = canvas.width / (window.devicePixelRatio || 1);
-    const x = this.chart._buildXScale(width);
-    
-    let closest = null;
-    let minDistance = Infinity;
-    
-    // Reduced tolerance and early exit for better performance
-    for (const candle of ohlc) {
-      const candleX = x(candle.date);
-      const distance = Math.abs(candleX - mouseX);
-      
-      if (distance < 10) { // Reduced from 20px to 10px
-        if (distance < minDistance) {
-          minDistance = distance;
-          closest = candle;
-        }
-      }
-    }
-    
-    return closest;
-  }
-
   showTooltip(clientX, clientY, candle) {
     if (!this.tooltip) return;
     
@@ -227,6 +96,14 @@ export class HoverIndicator {
     const changeColor = change >= 0 ? '#00ff00' : '#ff0000';
     
     const digits = this.chart.unit === "CNY/g" ? 2 : 0;
+    const usdDigits = this.chart.metal === "gold" ? 0 : 2;
+    
+    // Convert OHLC to USD using the chart's conversion method
+    const fxRate = candle.fx_close;
+    const openUsd = this.chart._cnyTickToUsdOzt ? this.chart._cnyTickToUsdOzt(candle.open, fxRate) : null;
+    const highUsd = this.chart._cnyTickToUsdOzt ? this.chart._cnyTickToUsdOzt(candle.high, fxRate) : null;
+    const lowUsd = this.chart._cnyTickToUsdOzt ? this.chart._cnyTickToUsdOzt(candle.low, fxRate) : null;
+    const closeUsd = this.chart._cnyTickToUsdOzt ? this.chart._cnyTickToUsdOzt(candle.close, fxRate) : null;
     
     this.tooltip.innerHTML = `
       <div style="margin-bottom: 4px; font-weight: bold;">
@@ -242,10 +119,10 @@ export class HoverIndicator {
           hour: '2-digit', minute: '2-digit'
         })} Local
       </div>
-      <div>O: ¥${candle.open.toFixed(digits)}</div>
-      <div>H: ¥${candle.high.toFixed(digits)}</div>
-      <div>L: ¥${candle.low.toFixed(digits)}</div>
-      <div>C: ¥${candle.close.toFixed(digits)}</div>
+      <div>O: ¥${candle.open.toFixed(digits)}${Number.isFinite(openUsd) ? ` / $${openUsd.toFixed(usdDigits)}` : ''}</div>
+      <div>H: ¥${candle.high.toFixed(digits)}${Number.isFinite(highUsd) ? ` / $${highUsd.toFixed(usdDigits)}` : ''}</div>
+      <div>L: ¥${candle.low.toFixed(digits)}${Number.isFinite(lowUsd) ? ` / $${lowUsd.toFixed(usdDigits)}` : ''}</div>
+      <div>C: ¥${candle.close.toFixed(digits)}${Number.isFinite(closeUsd) ? ` / $${closeUsd.toFixed(usdDigits)}` : ''}</div>
       <div style="color: ${changeColor}; margin-top: 4px;">
         ${change >= 0 ? '+' : ''}¥${change.toFixed(digits)} 
         (${changePercent >= 0 ? '+' : ''}${changePercent.toFixed(2)}%)
@@ -263,6 +140,34 @@ export class HoverIndicator {
     }
   }
 
+  findCandleAtX(mouseX) {
+    const ohlc = this.chart.lastOhlc;
+    if (!ohlc || !ohlc.length) return null;
+    
+    const canvas = this.chart.canvas;
+    if (!canvas) return null;
+    
+    const width = canvas.width / (window.devicePixelRatio || 1);
+    const x = this.chart._buildXScale(width);
+    
+    let closest = null;
+    let minDistance = Infinity;
+    
+    for (const candle of ohlc) {
+      const candleX = x(candle.date);
+      const distance = Math.abs(candleX - mouseX);
+      
+      if (distance < 10) {
+        if (distance < minDistance) {
+          minDistance = distance;
+          closest = candle;
+        }
+      }
+    }
+    
+    return closest;
+  }
+
   drawCrosshair() {
     if (!this.currentCandle || !this.crosshair.x || !this.crosshair.y) return;
     
@@ -270,7 +175,6 @@ export class HoverIndicator {
     const canvas = this.chart.canvas;
     if (!ctx || !canvas) return;
     
-    // Back to simple overlay drawing
     ctx.save();
     ctx.strokeStyle = 'rgba(255,255,255,0.5)';
     ctx.lineWidth = 1;
@@ -280,7 +184,6 @@ export class HoverIndicator {
     const height = canvas.height / (window.devicePixelRatio || 1);
     const margin = this.chart.margin;
     
-    // Draw both lines in one path for efficiency
     ctx.beginPath();
     ctx.moveTo(this.crosshair.x, margin.top);
     ctx.lineTo(this.crosshair.x, height - margin.bottom);

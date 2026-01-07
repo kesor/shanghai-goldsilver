@@ -101,8 +101,11 @@ export class CandleChart {
     const container = document.getElementById(this.containerId);
     if (!container) return this;
 
-    // always clear/repaint container
-    container.innerHTML = "";
+    // Don't clear container if we're just updating with hover indicator active
+    const hasHoverIndicator = this.hoverIndicator && this.hoverIndicator.isActive;
+    if (!hasHoverIndicator) {
+      container.innerHTML = "";
+    }
 
     const width = container.clientWidth;
     const height = container.clientHeight - 40;
@@ -182,19 +185,18 @@ export class CandleChart {
       this.#drawReturnHistogramInGap(ctx, plot, x, y, visible);
     }
 
-    // Add navigation arrows
-    this.#addNavigationArrows(container, width, height);
+    // Add navigation arrows (only if not already added)
+    if (!hasHoverIndicator) {
+      this.#addNavigationArrows(container, width, height);
+    }
 
     // Update hover indicator base image if it exists
     if (this.hoverIndicator) {
-      // Clear the base image so it gets recreated fresh after the new render
-      this.hoverIndicator.baseImageData = null;
+      // Hover indicator will re-render automatically, no need to manage base images
     } else if (visible.length > 0) {
       // Enable hover indicator only after we have data to display
       this.hoverIndicator = new HoverIndicator(this);
-      setTimeout(() => {
-        this.hoverIndicator.enable();
-      }, 50);
+      this.hoverIndicator.enable();
     }
 
     return this;
@@ -1340,5 +1342,10 @@ export class CandleChart {
   _buildXScale(width) {
     // Expose the X scale building method for hover indicator
     return this.#buildX(width);
+  }
+
+  _cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
+    // Expose the CNY to USD conversion method for hover indicator
+    return this.#cnyTickToUsdOzt(cnyTick, fxCnyPerUsd);
   }
 }
