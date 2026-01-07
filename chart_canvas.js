@@ -4,6 +4,7 @@ import { drawShanghaiSessions } from "./sessions.js";
 import { createOHLC } from "./candles.js";
 import { HoverIndicator } from "./hover_indicator.js";
 import { buildXScale, buildYScale } from "./chart_scales.js";
+import { drawGrid, drawAxes, drawCandles, cnyTickToUsdOzt } from "./chart_drawing.js";
 import { HOUR_MS, DAY_MS, OZT } from "./consts.js";
 import { shanghaiMidnightUtcMs, shanghaiTimeUtcMs } from "./time_shanghai.js";
 
@@ -178,9 +179,9 @@ export class CandleChart {
       this.#drawRangeBox(ctx, plot, x, y, visible);
     }
 
-    this.#drawAxes(ctx, plot, x, y, fx);
-    this.#drawGrid(ctx, plot, y);
-    if (visible.length) this.#drawCandles(ctx, plot, x, y, visible);
+    drawAxes(ctx, plot, x, y, fx, this.unit, this.metal);
+    drawGrid(ctx, plot, y);
+    if (visible.length) drawCandles(ctx, plot, x, y, visible);
 
     if (this.retHist?.enabled && visible.length >= 20) {
       this.#drawReturnHistogramInGap(ctx, plot, x, y, visible);
@@ -775,7 +776,7 @@ export class CandleChart {
       
       const digits = this.unit === "CNY/g" ? 2 : 0;
       const usdDigits = this.metal === "gold" ? 0 : 2;
-      const usdPrice = this.#cnyTickToUsdOzt(recent.close, fxCnyPerUsd);
+      const usdPrice = cnyTickToUsdOzt(recent.close, fxCnyPerUsd, this.unit);
       
       const recentStats = [
         `Latest: ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai'})} SH | ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})} Local`,
@@ -899,8 +900,8 @@ export class CandleChart {
       if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
         firstSession.high.cny = Math.max(firstSession.high.cny, d.high);
         firstSession.low.cny = Math.min(firstSession.low.cny, d.low);
-        const highUsd = this.#cnyTickToUsdOzt(d.high, fxCnyPerUsd);
-        const lowUsd = this.#cnyTickToUsdOzt(d.low, fxCnyPerUsd);
+        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.unit);
+        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.unit);
         if (Number.isFinite(highUsd)) firstSession.high.usd = Math.max(firstSession.high.usd, highUsd);
         if (Number.isFinite(lowUsd)) firstSession.low.usd = Math.min(firstSession.low.usd, lowUsd);
         firstSession.count++;
@@ -913,8 +914,8 @@ export class CandleChart {
       if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
         secondSession.high.cny = Math.max(secondSession.high.cny, d.high);
         secondSession.low.cny = Math.min(secondSession.low.cny, d.low);
-        const highUsd = this.#cnyTickToUsdOzt(d.high, fxCnyPerUsd);
-        const lowUsd = this.#cnyTickToUsdOzt(d.low, fxCnyPerUsd);
+        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.unit);
+        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.unit);
         if (Number.isFinite(highUsd)) secondSession.high.usd = Math.max(secondSession.high.usd, highUsd);
         if (Number.isFinite(lowUsd)) secondSession.low.usd = Math.min(secondSession.low.usd, lowUsd);
         secondSession.count++;
@@ -976,152 +977,8 @@ export class CandleChart {
   }
 
   // ------------------------
-  // draw: grid / axes / candles
-  // ------------------------
-
-  #drawGrid(ctx, plot, y) {
-    // Draw horizontal grid lines
-    ctx.lineWidth = 0.5;
-    ctx.strokeStyle = "#999";
-
-    this.#clipPlot(plot);
-    for (const t of y.ticks(8)) {
-      const yy = y(t);
-      ctx.beginPath();
-      ctx.moveTo(plot.left, yy);
-      ctx.lineTo(plot.right, yy);
-      ctx.stroke();
-    }
-    this.#unclip();
-  }
-
-  #drawAxes(ctx, plot, x, y, fxCnyPerUsd) {
-    // Draw X and Y axes with tick labels
-    ctx.lineWidth = 1;
-    ctx.strokeStyle = "white";
-    ctx.fillStyle = "white";
-    ctx.font = "12px Arial";
-
-    // X axis
-    ctx.beginPath();
-    ctx.moveTo(plot.left, plot.bottom);
-    ctx.lineTo(plot.right, plot.bottom);
-    ctx.stroke();
-
-    const xt = x.ticks(Math.max(2, Math.floor(plot.w / 120)));
-    ctx.textAlign = "center";
-    ctx.textBaseline = "top";
-    for (const t of xt) {
-      const xx = x(t);
-      ctx.beginPath();
-      ctx.moveTo(xx, plot.bottom);
-      ctx.lineTo(xx, plot.bottom + 5);
-      ctx.stroke();
-      ctx.fillText(fmtTickShanghai(t), xx, plot.bottom + 7);
-    }
-
-    const yt = y.ticks(8);
-
-    // Left Y axis (CNY)
-    ctx.beginPath();
-    ctx.moveTo(plot.left, plot.top);
-    ctx.lineTo(plot.left, plot.bottom);
-    ctx.stroke();
-
-    ctx.textAlign = "right";
-    ctx.textBaseline = "middle";
-
-    const cnyDigits = this.unit === "CNY/g" ? 2 : 0;
-
-    for (const t of yt) {
-      const yy = y(t);
-      ctx.beginPath();
-      ctx.moveTo(plot.left - 5, yy);
-      ctx.lineTo(plot.left, yy);
-      ctx.stroke();
-      ctx.fillText(`¥${t.toFixed(cnyDigits)}`, plot.left - 8, yy);
-    }
-
-    // Right Y axis (USD/ozt), same y-scale
-    ctx.beginPath();
-    ctx.moveTo(plot.right, plot.top);
-    ctx.lineTo(plot.right, plot.bottom);
-    ctx.stroke();
-
-    ctx.textAlign = "left";
-    ctx.textBaseline = "middle";
-
-    const fxOk = Number.isFinite(fxCnyPerUsd) && fxCnyPerUsd > 0;
-    const usdDigits = this.metal === "gold" ? 0 : 2;
-
-    for (const t of yt) {
-      const yy = y(t);
-      ctx.beginPath();
-      ctx.moveTo(plot.right, yy);
-      ctx.lineTo(plot.right + 5, yy);
-      ctx.stroke();
-
-      const usd = fxOk ? this.#cnyTickToUsdOzt(t, fxCnyPerUsd) : NaN;
-      const label = Number.isFinite(usd) ? `$${usd.toFixed(usdDigits)}` : "—";
-      ctx.fillText(label, plot.right + 8, yy);
-    }
-  }
-
-  #drawCandles(ctx, plot, x, y, ohlc) {
-    // Draw candlestick chart with dynamic width calculation
-    let w = 3;
-    if (ohlc.length >= 2) {
-      let minDx = Infinity;
-      for (let i = 1; i < ohlc.length; i++) {
-        const dx = x(ohlc[i].date) - x(ohlc[i - 1].date);
-        if (dx > 0 && dx < minDx) minDx = dx;
-      }
-      if (Number.isFinite(minDx)) w = Math.max(1, minDx * 0.7);
-    }
-
-    this.#clipPlot(plot);
-
-    for (const d of ohlc) {
-      const xx = x(d.date);
-
-      // wick
-      ctx.strokeStyle = "white";
-      ctx.lineWidth = 1;
-      ctx.beginPath();
-      ctx.moveTo(xx, y(d.high));
-      ctx.lineTo(xx, y(d.low));
-      ctx.stroke();
-
-      // body
-      const up = d.close >= d.open;
-      ctx.fillStyle = up ? "#00ff00" : "#ff0000";
-      const y0 = y(Math.max(d.open, d.close));
-      const h = Math.max(1, Math.abs(y(d.open) - y(d.close)));
-      ctx.fillRect(xx - w / 2, y0, w, h);
-    }
-
-    this.#unclip();
-  }
-
-  // ------------------------
   // conversions
   // ------------------------
-
-  #cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
-    // Convert CNY price to USD per troy ounce
-    if (
-      !Number.isFinite(cnyTick) ||
-      !Number.isFinite(fxCnyPerUsd) ||
-      fxCnyPerUsd <= 0
-    )
-      return NaN;
-
-    // normalize to CNY/gram
-    const cnyPerGram = this.unit === "CNY/kg" ? cnyTick / 1000.0 : cnyTick;
-
-    // USD/ozt = (CNY/g * g/ozt) / (CNY/USD)
-    return (cnyPerGram * OZT) / fxCnyPerUsd;
-  }
 
   #addNavigationArrows(container, width, height) {
     // Add left and right navigation arrows
@@ -1260,6 +1117,6 @@ export class CandleChart {
 
   _cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
     // Expose the CNY to USD conversion method for hover indicator
-    return this.#cnyTickToUsdOzt(cnyTick, fxCnyPerUsd);
+    return cnyTickToUsdOzt(cnyTick, fxCnyPerUsd, this.unit);
   }
 }
