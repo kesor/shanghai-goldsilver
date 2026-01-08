@@ -95,8 +95,8 @@ export class HoverIndicator {
     const changePercent = candle.open !== 0 ? (change / candle.open * 100) : 0;
     const changeColor = change >= 0 ? '#00ff00' : '#ff0000';
     
-    const digits = this.chart.unit === "CNY/g" ? 2 : 0;
-    const usdDigits = this.chart.metal === "gold" ? 0 : 2;
+    const digits = this.chart.config.unit === "CNY/g" ? 2 : 0;
+    const usdDigits = this.chart.config.metal === "gold" ? 0 : 2;
     
     // Convert OHLC to USD using the chart's conversion method
     const fxRate = candle.fx_close;
@@ -182,7 +182,7 @@ export class HoverIndicator {
     
     const width = canvas.width / (window.devicePixelRatio || 1);
     const height = canvas.height / (window.devicePixelRatio || 1);
-    const margin = this.chart.margin;
+    const margin = this.chart.config.margin;
     
     ctx.beginPath();
     ctx.moveTo(this.crosshair.x, margin.top);
