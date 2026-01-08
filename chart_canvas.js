@@ -7,83 +7,16 @@ import { buildXScale, buildYScale } from "./chart_scales.js";
 import { drawGrid, drawAxes, drawCandles, cnyTickToUsdOzt } from "./chart_drawing.js";
 import { HOUR_MS, DAY_MS, OZT } from "./consts.js";
 import { shanghaiMidnightUtcMs, shanghaiTimeUtcMs } from "./time_shanghai.js";
+import { ChartConfig } from "./chart_config.js";
 
 export class CandleChart {
   constructor(containerId, opts = {}) {
     this.containerId = containerId;
-
-    this.title = opts.title ?? "";
-    this.metal = opts.metal ?? "gold"; // "gold" | "silver"
-    this.unit = opts.unit ?? "CNY/g"; // "CNY/g" | "CNY/kg"
-
-    this.margin = opts.margin ?? { top: 60, right: 120, bottom: 30, left: 90 };
+    this.config = new ChartConfig(opts);
     
     // Session navigation
     this.sessionOffset = 0; // 0 = current sessions, -1 = previous, etc.
     this.priceStream = null; // Will be set by client
-
-    this.fills = opts.fills ?? {
-      night: "rgba(25, 25, 112, 0.35)",
-      day: "rgba(139, 69, 19, 0.35)",
-    };
-
-    // acceptance heat (dwell by price bin)
-    this.heat = opts.heat ?? {
-      enabled: true,
-      bins: 32, // horizontal bands
-      alpha: 0.22, // max opacity
-      gamma: 0.6, // <1 boosts weak zones
-    };
-
-    this.volBands = opts.volBands ?? {
-      enabled: false,
-      window: 60, // candles
-      k: 2.0, // ±kσ
-      alpha: 0.18,
-      strokeAlpha: 0.55,
-      fill: true,
-    };
-
-    this.rangeBox = opts.rangeBox ?? {
-      enabled: false,
-      window: 120, // candles
-      alpha: 0.12,
-      strokeAlpha: 0.4,
-    };
-
-    this.retHist = opts.retHist ?? {
-      enabled: true,
-      bins: 41,
-      mode: "pct", // "pct" | "delta"
-      window: 600, // last N returns
-      wMax: 0.22, // max panel width as fraction of plot.w
-      wMinPx: 140,
-      hFrac: 0.38, // panel height as fraction of plot.h
-      pad: 10,
-      bg: "rgba(0,0,0,1.0)",
-      border: "rgba(255,255,255,0.25)",
-      barAlpha: 0.55,
-      font: "12px Arial",
-    };
-
-    this.window = opts.window ?? {
-      sessions: 2,
-      day: { start: [9, 0], end: [15, 30], padLeftH: 1, padRightH: 1 }, // 08:00..16:30
-      night: { start: [20, 0], end: [2, 30], padLeftH: 1, padRightH: 1 }, // 19:00..03:30
-    };
-
-    // title stats
-    this.titleOpts = opts.titleOpts ?? {
-      showFx: true,
-      showHiLo: true,
-      showLast: true,
-      cnyDigits: this.unit === "CNY/g" ? 2 : 0,
-      usdDigits: this.metal === "gold" ? 0 : 2,
-    };
-
-    // rendering
-    this.yPadPct = opts.yPadPct ?? 0.03; // 3%
-    this.yPadMin = opts.yPadMin ?? 1;
 
     this.canvas = null;
     this.ctx = null;
@@ -92,7 +25,7 @@ export class CandleChart {
 
   setTitle(title) {
     // Set chart title and return this for chaining
-    this.title = title;
+    this.config.setTitle(title);
     return this;
   }
 
@@ -123,7 +56,7 @@ export class CandleChart {
     };
 
     // windowed x
-    const x = buildXScale(width, this.margin, this.window, this.sessionOffset);
+    const x = buildXScale(width, this.config.margin, this.config.window, this.sessionOffset);
 
     let visible = [];
     let fx = NaN;
@@ -146,7 +79,7 @@ export class CandleChart {
     this.#setTitle(container, this.#buildTitle(visible, fx));
 
     // still render axes/sessions even if no points in the window
-    const y = buildYScale(visible, plot, this.yPadPct, this.yPadMin);
+    const y = buildYScale(visible, plot, this.config.yPadPct, this.config.yPadMin);
 
     this.#ensureCanvas(container, width, height);
     const ctx = this.ctx;
@@ -157,33 +90,33 @@ export class CandleChart {
 
     // sessions shading across full x-domain
     this.#clipPlot(plot);
-    drawShanghaiSessions(ctx, x, plot, this.fills);
+    drawShanghaiSessions(ctx, x, plot, this.config.fills);
     this.#unclip();
 
     // acceptance heat (dwell by price bin)
-    if (this.heat?.enabled && visible.length) {
+    if (this.config.heat?.enabled && visible.length) {
       this.#drawAcceptanceHeat(ctx, plot, x, y, visible);
     }
 
     if (
-      this.volBands?.enabled &&
-      visible.length >= (this.volBands.window ?? 60) + 2
+      this.config.volBands?.enabled &&
+      visible.length >= (this.config.volBands.window ?? 60) + 2
     ) {
       this.#drawVolBands(ctx, plot, x, y, visible);
     }
 
     if (
-      this.rangeBox?.enabled &&
-      visible.length >= (this.rangeBox.window ?? 120)
+      this.config.rangeBox?.enabled &&
+      visible.length >= (this.config.rangeBox.window ?? 120)
     ) {
       this.#drawRangeBox(ctx, plot, x, y, visible);
     }
 
-    drawAxes(ctx, plot, x, y, fx, this.unit, this.metal);
+    drawAxes(ctx, plot, x, y, fx, this.config.unit, this.config.metal);
     drawGrid(ctx, plot, y);
     if (visible.length) drawCandles(ctx, plot, x, y, visible);
 
-    if (this.retHist?.enabled && visible.length >= 20) {
+    if (this.config.retHist?.enabled && visible.length >= 20) {
       this.#drawReturnHistogramInGap(ctx, plot, x, y, visible);
     }
 
@@ -205,7 +138,7 @@ export class CandleChart {
   }
 
   #drawReturnHistogramInGap(ctx, plot, x, y, visible) {
-    const cfg = this.retHist;
+    const cfg = this.config.retHist;
     const bins = Math.max(9, cfg.bins ?? 41);
     const win = Math.max(30, cfg.window ?? 600);
 
@@ -346,7 +279,7 @@ export class CandleChart {
         const p0 = Math.abs(p) < 1e-9 ? 0 : p;
         return `${p0.toFixed(2)}%`;
       }
-      const digits = this.unit === "CNY/g" ? 2 : 0;
+      const digits = this.config.unit === "CNY/g" ? 2 : 0;
       const v0 = Math.abs(v) < 1e-9 ? 0 : v;
       return `¥${v0.toFixed(digits)}`;
     };
@@ -583,7 +516,7 @@ export class CandleChart {
   }
 
   #drawRangeBox(ctx, plot, x, y, visible) {
-    const cfg = this.rangeBox;
+    const cfg = this.config.rangeBox;
     const win = Math.max(20, cfg.window ?? 120);
     const tail = visible.slice(-win);
 
@@ -608,7 +541,7 @@ export class CandleChart {
   }
 
   #drawVolBands(ctx, plot, x, y, visible) {
-    const cfg = this.volBands;
+    const cfg = this.config.volBands;
     const win = Math.max(10, cfg.window ?? 60);
     const k = Math.max(0.5, cfg.k ?? 2);
 
@@ -665,7 +598,7 @@ export class CandleChart {
     ctx.font = "12px Arial";
     ctx.textAlign = "left";
     ctx.textBaseline = "top";
-    const digits = this.unit === "CNY/g" ? 2 : 0;
+    const digits = this.config.unit === "CNY/g" ? 2 : 0;
     ctx.fillText(
       `±${k}σ ≈ ¥${sigma.toFixed(digits)}`,
       plot.left + 6,
@@ -680,9 +613,9 @@ export class CandleChart {
   // ------------------------
 
   #drawAcceptanceHeat(ctx, plot, x, y, visible) {
-    const bins = Math.max(4, this.heat?.bins ?? 32);
-    const alphaMax = Math.max(0, Math.min(1, this.heat?.alpha ?? 0.22));
-    const gamma = Math.max(0.05, this.heat?.gamma ?? 0.6);
+    const bins = Math.max(4, this.config.heat?.bins ?? 32);
+    const alphaMax = Math.max(0, Math.min(1, this.config.heat?.alpha ?? 0.22));
+    const gamma = Math.max(0.05, this.config.heat?.gamma ?? 0.6);
 
     const [y0, y1] = y.domain(); // note: may be [min, max] or [max, min] depending on scale usage
     const lo = Math.min(y0, y1);
@@ -774,9 +707,9 @@ export class CandleChart {
       const change = recent.close - sessionStartPrice;
       const changePercent = sessionStartPrice !== 0 ? (change / sessionStartPrice * 100) : 0;
       
-      const digits = this.unit === "CNY/g" ? 2 : 0;
-      const usdDigits = this.metal === "gold" ? 0 : 2;
-      const usdPrice = cnyTickToUsdOzt(recent.close, fxCnyPerUsd, this.unit);
+      const digits = this.config.unit === "CNY/g" ? 2 : 0;
+      const usdDigits = this.config.metal === "gold" ? 0 : 2;
+      const usdPrice = cnyTickToUsdOzt(recent.close, fxCnyPerUsd, this.config.unit);
       
       const recentStats = [
         `Latest: ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit', timeZone: 'Asia/Shanghai'})} SH | ${recent.date.toLocaleTimeString('en-US', {hour: '2-digit', minute: '2-digit'})} Local`,
@@ -813,7 +746,7 @@ export class CandleChart {
 
   #buildTitle(visible, fxCnyPerUsd) {
     // Build comprehensive chart title with session details
-    const base = this.title ?? "";
+    const base = this.config.title ?? "";
     
     if (!visible?.length) {
       // Show session dates even without data
@@ -834,13 +767,13 @@ export class CandleChart {
     const [firstSession, secondSession] = this.#orderSessionsByTime(sessionStats);
     
     if (firstSession.count > 0) {
-      const cnyDecimals = this.metal === "silver" ? 0 : 2;
-      const usdDecimals = this.metal === "silver" ? 2 : 2;
+      const cnyDecimals = this.config.metal === "silver" ? 0 : 2;
+      const usdDecimals = this.config.metal === "silver" ? 2 : 2;
       parts.push(`${firstSession.name} ${firstSession.date}: [Lo ¥${firstSession.low.cny.toFixed(cnyDecimals)} $${firstSession.low.usd.toFixed(usdDecimals)}] [Hi ¥${firstSession.high.cny.toFixed(cnyDecimals)} $${firstSession.high.usd.toFixed(usdDecimals)}]`);
     }
     if (secondSession.count > 0) {
-      const cnyDecimals = this.metal === "silver" ? 0 : 2;
-      const usdDecimals = this.metal === "silver" ? 2 : 2;
+      const cnyDecimals = this.config.metal === "silver" ? 0 : 2;
+      const usdDecimals = this.config.metal === "silver" ? 2 : 2;
       parts.push(`${secondSession.name} ${secondSession.date}: [Lo ¥${secondSession.low.cny.toFixed(cnyDecimals)} $${secondSession.low.usd.toFixed(usdDecimals)}] [Hi ¥${secondSession.high.cny.toFixed(cnyDecimals)} $${secondSession.high.usd.toFixed(usdDecimals)}]`);
     }
 
@@ -881,7 +814,7 @@ export class CandleChart {
     };
     
     // Determine session names based on time of day
-    const [domainStart] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
+    const [domainStart] = buildXScale(800, this.config.margin, this.config.window, this.sessionOffset).domain();
     const firstHour = domainStart.getHours();
     
     if (firstHour >= 6 && firstHour < 18) {
@@ -900,8 +833,8 @@ export class CandleChart {
       if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
         firstSession.high.cny = Math.max(firstSession.high.cny, d.high);
         firstSession.low.cny = Math.min(firstSession.low.cny, d.low);
-        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.unit);
-        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.unit);
+        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.config.unit);
+        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.config.unit);
         if (Number.isFinite(highUsd)) firstSession.high.usd = Math.max(firstSession.high.usd, highUsd);
         if (Number.isFinite(lowUsd)) firstSession.low.usd = Math.min(firstSession.low.usd, lowUsd);
         firstSession.count++;
@@ -914,8 +847,8 @@ export class CandleChart {
       if (Number.isFinite(d.high) && Number.isFinite(d.low)) {
         secondSession.high.cny = Math.max(secondSession.high.cny, d.high);
         secondSession.low.cny = Math.min(secondSession.low.cny, d.low);
-        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.unit);
-        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.unit);
+        const highUsd = cnyTickToUsdOzt(d.high, fxCnyPerUsd, this.config.unit);
+        const lowUsd = cnyTickToUsdOzt(d.low, fxCnyPerUsd, this.config.unit);
         if (Number.isFinite(highUsd)) secondSession.high.usd = Math.max(secondSession.high.usd, highUsd);
         if (Number.isFinite(lowUsd)) secondSession.low.usd = Math.min(secondSession.low.usd, lowUsd);
         secondSession.count++;
@@ -932,7 +865,7 @@ export class CandleChart {
 
   #getCurrentSessionDates() {
     // Get current session date range from X scale
-    const [d0, d1] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
+    const [d0, d1] = buildXScale(800, this.config.margin, this.config.window, this.sessionOffset).domain();
     return [d0, d1];
   }
 
@@ -1092,7 +1025,7 @@ export class CandleChart {
   #requestData() {
     if (this.priceStream && this.priceStream.ws && this.priceStream.ws.readyState === WebSocket.OPEN) {
       // Calculate the actual time range that will be displayed
-      const [domainStart, domainEnd] = buildXScale(800, this.margin, this.window, this.sessionOffset).domain();
+      const [domainStart, domainEnd] = buildXScale(800, this.config.margin, this.config.window, this.sessionOffset).domain();
       const startTime = domainStart.getTime();
       const endTime = domainEnd.getTime();
       
@@ -1105,18 +1038,18 @@ export class CandleChart {
         type: "fetch",
         start_offset_hours: startOffsetHours,
         end_offset_hours: endOffsetHours,
-        metal: this.metal
+        metal: this.config.metal
       }));
     }
   }
 
   _buildXScale(width) {
     // Expose the X scale building method for hover indicator
-    return buildXScale(width, this.margin, this.window, this.sessionOffset);
+    return buildXScale(width, this.config.margin, this.config.window, this.sessionOffset);
   }
 
   _cnyTickToUsdOzt(cnyTick, fxCnyPerUsd) {
     // Expose the CNY to USD conversion method for hover indicator
-    return cnyTickToUsdOzt(cnyTick, fxCnyPerUsd, this.unit);
+    return cnyTickToUsdOzt(cnyTick, fxCnyPerUsd, this.config.unit);
   }
 }
