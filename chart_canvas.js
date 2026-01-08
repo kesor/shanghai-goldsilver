@@ -45,7 +45,7 @@ export class CandleChart {
     const width = container.clientWidth;
     const height = container.clientHeight - 40;
 
-    const m = this.margin;
+    const m = this.config.margin;
     const plot = {
       left: m.left,
       top: m.top,
