@@ -1,0 +1,59 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "type": "object",
+  "required": ["tradeDate", "updateTime", "empty", "totals", "monthData"],
+  "properties": {
+    "tradeDate": {
+      "type": "string",
+      "pattern": "^\\d{8}$",
+      "description": "Trade date in YYYYMMDD format"
+    },
+    "updateTime": {
+      "type": "string",
+      "description": "Timestamp of data update"
+    },
+    "empty": {
+      "type": "boolean",
+      "description": "Indicates if data is empty"
+    },
+    "totals": {
+      "$ref": "#/definitions/contractData",
+      "description": "Aggregate totals across all months"
+    },
+    "monthData": {
+      "type": "array",
+      "items": {
+        "$ref": "#/definitions/contractData"
+      },
+      "description": "Array of monthly contract data objects"
+    }
+  },
+  "definitions": {
+    "contractData": {
+      "type": "object",
+      "required": ["month", "monthID", "globex", "openOutcry", "totalVolume", "blockVolume", "efpVol", "efrVol", "eooVol", "efsVol", "subVol", "pntVol", "tasVol", "deliveries", "opnt", "aon", "atClose", "change", "strike", "exercises"],
+      "properties": {
+        "month": {"type": "string"},
+        "monthID": {"type": "string"},
+        "globex": {"type": "string"},
+        "openOutcry": {"type": "string"},
+        "totalVolume": {"type": "string"},
+        "blockVolume": {"type": "string"},
+        "efpVol": {"type": "string"},
+        "efrVol": {"type": "string"},
+        "eooVol": {"type": "string"},
+        "efsVol": {"type": "string"},
+        "subVol": {"type": "string"},
+        "pntVol": {"type": "string"},
+        "tasVol": {"type": "string"},
+        "deliveries": {"type": "string"},
+        "opnt": {"type": "string"},
+        "aon": {"type": "string"},
+        "atClose": {"type": "string"},
+        "change": {"type": "string"},
+        "strike": {"type": "string"},
+        "exercises": {"type": "string"}
+      }
+    }
+  }
+}
