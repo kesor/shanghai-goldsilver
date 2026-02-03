@@ -5,9 +5,11 @@
   <title>COMEX Silver Open Interest Flow</title>
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
-    #header { padding: 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; }
-    #header h1 { margin: 0 0 10px 0; font-size: 24px; }
-    #header p { margin: 5px 0; line-height: 1.6; }
+    #header { padding: 15px 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; }
+    #header h1 { margin: 0 0 8px 0; font-size: 22px; }
+    #header .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    #header p { margin: 4px 0; line-height: 1.4; font-size: 13px; }
+    #header ul { margin: 4px 0; padding-left: 18px; line-height: 1.4; font-size: 13px; }
     #header a { color: #0066cc; }
     #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
     
@@ -20,13 +22,26 @@
 <body>
   <div id="header">
     <h1>COMEX Silver Open Interest Flow</h1>
-    <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures Volume</a></p>
-    <p>This Sankey diagram visualizes the flow of <a href="https://www.investopedia.com/terms/o/openinterest.asp" target="_blank">Open Interest (OI)</a> across different <a href="https://www.investopedia.com/terms/f/futures.asp" target="_blank">futures</a> contract months over time. The width of each band represents the amount of OI, while the opacity (darkness) represents <a href="https://www.investopedia.com/terms/v/volume.asp" target="_blank">trading volume</a> - darker bands indicate higher volume for that contract on that day.</p>
-    <p><strong>Important Disclaimers:</strong></p>
-    <ul style="margin: 5px 0; padding-left: 20px;">
-      <li>OI data does not distinguish between long and short positions.</li>
-      <li>Flow routing between contracts and "External IN/OUT" nodes is calculated using a bucket-fill algorithm. We know the aggregate OI changes but not the exact movement between specific contracts. "External IN" represents new positions entering the market, while "External OUT" represents positions being closed.</li>
-    </ul>
+    <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures</a> | Shows top 7 contract months per day | Band width = OI amount | Band darkness = trading volume</p>
+    <div class="columns">
+      <div>
+        <p><strong>Visual Elements:</strong></p>
+        <ul>
+          <li><strong>Added:</strong> New positions or contracts entering top 7</li>
+          <li><strong>Removed:</strong> Positions closed or contracts leaving top 7</li>
+          <li><strong>Dashed borders:</strong> Contracts appearing for first time</li>
+          <li><strong>Band colors:</strong> Match target contract</li>
+        </ul>
+      </div>
+      <div>
+        <p><strong>Disclaimers:</strong></p>
+        <ul>
+          <li>OI doesn't distinguish long vs short positions</li>
+          <li>Flow routing uses bucket-fill algorithm (aggregate changes only)</li>
+          <li>Only top 7 contracts shown; totals include all contracts</li>
+        </ul>
+      </div>
+    </div>
   </div>
   <div id="chart"></div>
 
@@ -670,10 +685,11 @@
       const columnHeaders = Object.keys(actualColumnPositions).map(col => {
         const pos = actualColumnPositions[col];
         const dayData = data.find(d => d.tradeDate === pos.date);
-        const totalVolume = contracts.reduce((sum, contract) => 
-          sum + getContractValue(dayData, contract, 'totalVolume'), 0);
-        const totalOI = contracts.reduce((sum, contract) => 
-          sum + getContractValue(dayData, contract, 'atClose'), 0);
+        // Calculate totals across ALL contracts in the data, not just displayed ones
+        const totalVolume = (dayData.monthData || []).reduce((sum, item) => 
+          sum + cleanNumber(item.totalVolume), 0);
+        const totalOI = (dayData.monthData || []).reduce((sum, item) => 
+          sum + cleanNumber(item.atClose), 0);
         const dateObj = new Date(pos.date.slice(0,4), parseInt(pos.date.slice(4,6))-1, pos.date.slice(6,8));
         const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
         return {
