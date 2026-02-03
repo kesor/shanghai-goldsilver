@@ -53,6 +53,7 @@
     <div id="charts-container">
       <svg id="oi-chart" class="mini-chart"></svg>
       <svg id="vol-chart" class="mini-chart"></svg>
+      <svg id="cvol-chart" class="mini-chart"></svg>
       <div id="chart-tooltip"></div>
     </div>
   </div>
@@ -100,6 +101,16 @@
       const manifest = await fetchJSON('manifest.json');
       const docs = await Promise.all(manifest.map(f => fetchJSON(f)));
       return docs;
+    }
+
+    async function loadCVOLData() {
+      try {
+        const response = await fetchJSON('cvol-data.json');
+        return response;
+      } catch (e) {
+        console.warn('CVOL data not available:', e);
+        return null;
+      }
     }
 
     function getContractValue(dayData, contract, metric) {
@@ -518,12 +529,129 @@
         .text(fmtMMDD(totals[totals.length - 1].date));
     }
 
-    function render(data) {
+    async function renderCVOLChart(cvolData) {
+      if (!cvolData || !cvolData.quotes || cvolData.quotes.length === 0) {
+        return;
+      }
+
+      const barWidth = 8;
+      const barGap = 2;
+      const margin = { top: 5, right: 5, bottom: 18, left: 50 };
+      const width = (barWidth + barGap) * cvolData.quotes.length - barGap;
+      const height = 80 - margin.top - margin.bottom;
+      
+      const tooltip = d3.select('#chart-tooltip');
+
+      const cvolSvg = d3.select('#cvol-chart');
+      cvolSvg.selectAll('*').remove();
+      cvolSvg.attr('width', width + margin.left + margin.right);
+      const cvolG = cvolSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      
+      const maxCVOL = d3.max(cvolData.quotes, d => d.last || 0);
+      const minCVOL = d3.min(cvolData.quotes, d => d.last || 0);
+      const cvolScale = d3.scaleLinear().domain([minCVOL * 0.95, maxCVOL * 1.05]).range([height, 0]);
+      
+      // Line path
+      const line = d3.line()
+        .x((d, i) => i * (barWidth + barGap) + barWidth / 2)
+        .y(d => cvolScale(d.last || 0));
+      
+      cvolG.append('path')
+        .datum(cvolData.quotes)
+        .attr('d', line)
+        .attr('fill', 'none')
+        .attr('stroke', '#2ca02c')
+        .attr('stroke-width', 2);
+      
+      // Invisible rects for hover
+      cvolG.selectAll('rect')
+        .data(cvolData.quotes)
+        .join('rect')
+        .attr('x', (d, i) => i * (barWidth + barGap))
+        .attr('y', 0)
+        .attr('width', barWidth)
+        .attr('height', height)
+        .attr('fill', 'transparent')
+        .style('cursor', 'crosshair')
+        .on('mouseover', function(event, d) {
+          const dateObj = new Date(d.tradeDate);
+          const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
+          const dateStr = `${(dateObj.getMonth()+1).toString().padStart(2,'0')}/${dateObj.getDate().toString().padStart(2,'0')}`;
+          tooltip.style('display', 'block')
+            .html(`${dayName}, ${dateStr}<br/>Volatility: ${(d.last || 0).toFixed(2)}%`);
+        })
+        .on('mousemove', function(event) {
+          tooltip.style('left', (event.clientX - tooltip.node().offsetWidth - 15) + 'px')
+            .style('top', (event.clientY - 30) + 'px');
+        })
+        .on('mouseout', function() {
+          tooltip.style('display', 'none');
+        });
+      
+      cvolG.append('text')
+        .attr('x', -5)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text('Volatility');
+      
+      // Y-axis line
+      cvolG.append('line')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', 0)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Baseline
+      cvolG.append('line')
+        .attr('x1', 0)
+        .attr('y1', height)
+        .attr('x2', width)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Y-axis labels
+      cvolG.append('text')
+        .attr('x', -5)
+        .attr('y', cvolScale(maxCVOL))
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '9px')
+        .text(maxCVOL.toFixed(1) + '%');
+      
+      // X-axis labels
+      if (cvolData.quotes.length > 0) {
+        const firstDate = new Date(cvolData.quotes[0].tradeDate);
+        const lastDate = new Date(cvolData.quotes[cvolData.quotes.length - 1].tradeDate);
+        
+        cvolG.append('text')
+          .attr('x', 0)
+          .attr('y', height + 12)
+          .attr('text-anchor', 'start')
+          .style('font-size', '9px')
+          .text(`${(firstDate.getMonth()+1).toString().padStart(2,'0')}/${firstDate.getDate().toString().padStart(2,'0')}`);
+        
+        cvolG.append('text')
+          .attr('x', width)
+          .attr('y', height + 12)
+          .attr('text-anchor', 'end')
+          .style('font-size', '9px')
+          .text(`${(lastDate.getMonth()+1).toString().padStart(2,'0')}/${lastDate.getDate().toString().padStart(2,'0')}`);
+      }
+    }
+
+    function render(data, cvolData) {
       const container = d3.select('#chart');
       container.selectAll('*').remove();
       
       // Render mini charts in header
       renderMiniCharts(data);
+      if (cvolData) {
+        renderCVOLChart(cvolData);
+      }
       
       const graph = buildRollingGraph(data);
       
@@ -944,10 +1072,15 @@
 
     (async function main() {
       let data = null;
+      let cvolData = null;
+      
       async function doRender() {
         try {
-          if (!data) data = await loadAllData();
-          render(data);
+          if (!data) {
+            data = await loadAllData();
+            cvolData = await loadCVOLData();
+          }
+          render(data, cvolData);
         } catch (e) {
           console.error(e);
         }

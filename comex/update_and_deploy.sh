@@ -8,6 +8,9 @@ cd "$(dirname "$0")"
 # Fetch today's data
 ./fetch.sh
 
+# Fetch CVOL data
+./fetch_cvol.sh
+
 # Clean up empty files
 ./cleanup_empty.sh
 
