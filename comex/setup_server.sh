@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 
 # Setup script to configure COMEX data fetching on server
-# Run this once: ./setup_server.sh
+# Safe to run multiple times (idempotent)
 
 SERVER="kesor@ssh.kesor.net"
 SCRIPT_DIR="~/comex"
@@ -9,17 +9,24 @@ PUBLIC_DIR="~/kesor.net/comex"
 
 echo "Setting up COMEX data fetching on server..."
 
-# Create directories
+# Create directories (idempotent)
 ssh $SERVER "mkdir -p $SCRIPT_DIR $PUBLIC_DIR"
 
-# Copy scripts to private directory
+# Copy scripts to private directory (overwrites)
 echo "Copying scripts to $SCRIPT_DIR..."
 scp fetch.sh cleanup_empty.sh $SERVER:$SCRIPT_DIR/
+ssh $SERVER "chmod +x $SCRIPT_DIR/fetch.sh $SCRIPT_DIR/cleanup_empty.sh"
 
-# Copy current data and HTML to public directory
-echo "Copying data and HTML to $PUBLIC_DIR..."
-scp sankey.html manifest.json *.json $SERVER:$PUBLIC_DIR/
+# Copy HTML to public directory (overwrites)
+echo "Copying HTML to $PUBLIC_DIR..."
+scp sankey.html $SERVER:$PUBLIC_DIR/
 ssh $SERVER "cd $PUBLIC_DIR && cp sankey.html index.html"
+
+# Copy data files only if they don't exist
+echo "Copying data files (skipping existing)..."
+for file in manifest.json *-data.json; do
+  [ -f "$file" ] && ssh $SERVER "test -f $PUBLIC_DIR/$file" || scp "$file" $SERVER:$PUBLIC_DIR/ 2>/dev/null
+done
 
 # Create server-side update script
 echo "Creating server-side update script..."
@@ -90,7 +97,7 @@ EOF
 ssh $SERVER "chmod +x $SCRIPT_DIR/update_and_deploy.sh"
 
 echo ""
-echo "Setup complete!"
+echo "✓ Setup complete! (Safe to run again anytime)"
 echo ""
 echo "Next steps:"
 echo "1. Update cookies on server:"
