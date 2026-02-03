@@ -12,8 +12,8 @@
     #header p { margin: 4px 0; line-height: 1.4; font-size: 13px; }
     #header ul { margin: 4px 0; padding-left: 18px; line-height: 1.4; font-size: 13px; }
     #header a { color: #0066cc; }
-    #charts-container { display: flex; flex-direction: column; gap: 8px; position: relative; }
-    .mini-chart { width: 300px; height: 80px; }
+    #charts-container { display: flex; flex-direction: column; gap: 8px; position: relative; align-items: flex-end; }
+    .mini-chart { height: 80px; }
     .mini-chart text { font-size: 10px; fill: #666; }
     .mini-chart rect { cursor: crosshair; }
     #chart-tooltip { position: fixed; background: rgba(0,0,0,0.8); color: white; padding: 5px 8px; border-radius: 3px; font-size: 11px; pointer-events: none; display: none; white-space: nowrap; z-index: 1000; }
@@ -341,14 +341,22 @@
     }
 
     function renderMiniCharts(data) {
-      const totals = data.map(dayData => ({
-        date: dayData.tradeDate,
-        oi: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.atClose), 0),
-        vol: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.totalVolume), 0)
-      }));
+      const totals = data.map(dayData => {
+        const dateStr = dayData.tradeDate;
+        const dateObj = new Date(dateStr.slice(0,4), parseInt(dateStr.slice(4,6))-1, dateStr.slice(6,8));
+        const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
+        return {
+          date: dayData.tradeDate,
+          dayName: dayName,
+          oi: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.atClose), 0),
+          vol: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.totalVolume), 0)
+        };
+      });
 
+      const barWidth = 8;
+      const barGap = 2;
       const margin = { top: 5, right: 5, bottom: 18, left: 50 };
-      const width = 300 - margin.left - margin.right;
+      const width = (barWidth + barGap) * totals.length - barGap;
       const height = 80 - margin.top - margin.bottom;
       
       const tooltip = d3.select('#chart-tooltip');
@@ -356,26 +364,26 @@
       // OI Chart
       const oiSvg = d3.select('#oi-chart');
       oiSvg.selectAll('*').remove();
+      oiSvg.attr('width', width + margin.left + margin.right);
       const oiG = oiSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
       
-      const xScale = d3.scaleBand().domain(totals.map(d => d.date)).range([0, width]).padding(0.1);
       const maxOI = d3.max(totals, d => d.oi);
       const oiScale = d3.scaleLinear().domain([0, maxOI]).range([height, 0]);
       
       oiG.selectAll('rect')
         .data(totals)
         .join('rect')
-        .attr('x', d => xScale(d.date))
+        .attr('x', (d, i) => i * (barWidth + barGap))
         .attr('y', d => oiScale(d.oi))
-        .attr('width', xScale.bandwidth())
+        .attr('width', barWidth)
         .attr('height', d => height - oiScale(d.oi))
         .attr('fill', '#4682b4')
         .on('mouseover', function(event, d) {
           tooltip.style('display', 'block')
-            .html(`${fmtMMDD(d.date)}<br/>Total OI: ${d.oi.toLocaleString()}`);
+            .html(`${d.dayName}, ${fmtMMDD(d.date)}<br/>Total OI: ${d.oi.toLocaleString()}`);
         })
         .on('mousemove', function(event) {
-          tooltip.style('left', (event.clientX + 15) + 'px')
+          tooltip.style('left', (event.clientX - tooltip.node().offsetWidth - 15) + 'px')
             .style('top', (event.clientY - 30) + 'px');
         })
         .on('mouseout', function() {
@@ -434,6 +442,7 @@
       // Volume Chart
       const volSvg = d3.select('#vol-chart');
       volSvg.selectAll('*').remove();
+      volSvg.attr('width', width + margin.left + margin.right);
       const volG = volSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
       
       const maxVol = d3.max(totals, d => d.vol);
@@ -442,17 +451,17 @@
       volG.selectAll('rect')
         .data(totals)
         .join('rect')
-        .attr('x', d => xScale(d.date))
+        .attr('x', (d, i) => i * (barWidth + barGap))
         .attr('y', d => volScale(d.vol))
-        .attr('width', xScale.bandwidth())
+        .attr('width', barWidth)
         .attr('height', d => height - volScale(d.vol))
         .attr('fill', '#ff7f0e')
         .on('mouseover', function(event, d) {
           tooltip.style('display', 'block')
-            .html(`${fmtMMDD(d.date)}<br/>Total Volume: ${d.vol.toLocaleString()}`);
+            .html(`${d.dayName}, ${fmtMMDD(d.date)}<br/>Total Volume: ${d.vol.toLocaleString()}`);
         })
         .on('mousemove', function(event) {
-          tooltip.style('left', (event.clientX + 15) + 'px')
+          tooltip.style('left', (event.clientX - tooltip.node().offsetWidth - 15) + 'px')
             .style('top', (event.clientY - 30) + 'px');
         })
         .on('mouseout', function() {
