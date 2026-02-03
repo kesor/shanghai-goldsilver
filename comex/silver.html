@@ -1,0 +1,968 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>COMEX Silver Open Interest Flow</title>
+  <style>
+    html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
+    #header { padding: 15px 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; display: grid; grid-template-columns: 1fr auto; gap: 20px; }
+    #header-left { display: flex; flex-direction: column; }
+    #header h1 { margin: 0 0 8px 0; font-size: 22px; }
+    #header .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+    #header p { margin: 4px 0; line-height: 1.4; font-size: 13px; }
+    #header ul { margin: 4px 0; padding-left: 18px; line-height: 1.4; font-size: 13px; }
+    #header a { color: #0066cc; }
+    #charts-container { display: flex; flex-direction: column; gap: 8px; position: relative; align-items: flex-end; }
+    .mini-chart { height: 80px; }
+    .mini-chart text { font-size: 10px; fill: #666; }
+    .mini-chart rect { cursor: crosshair; }
+    #chart-tooltip { position: fixed; background: rgba(0,0,0,0.8); color: white; padding: 5px 8px; border-radius: 3px; font-size: 11px; pointer-events: none; display: none; white-space: nowrap; z-index: 1000; }
+    #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
+    
+    .node rect { stroke-width: 1px; }
+    .node text { font-size: 12px; fill: #000; }
+    .link { fill: none; stroke-opacity: 0.6; }
+    .link:hover { stroke-opacity: 0.8; }
+  </style>
+</head>
+<body>
+  <div id="header">
+    <div id="header-left">
+      <h1>COMEX Silver Open Interest Flow</h1>
+      <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures</a> | Shows top 7 contract months per day | Band width = OI amount | Band darkness = trading volume</p>
+      <div class="columns">
+        <div>
+          <p><strong>Visual Elements:</strong></p>
+          <ul>
+            <li><strong>Added:</strong> New positions or contracts entering top 7</li>
+            <li><strong>Removed:</strong> Positions closed or contracts leaving top 7</li>
+            <li><strong>Dashed borders:</strong> Contracts appearing for first time</li>
+            <li><strong>Band colors:</strong> Match target contract</li>
+          </ul>
+        </div>
+        <div>
+          <p><strong>Disclaimers:</strong></p>
+          <ul>
+            <li>OI doesn't distinguish long vs short positions</li>
+            <li>Flow routing uses bucket-fill algorithm (aggregate changes only)</li>
+            <li>Only top 7 contracts shown; totals include all contracts</li>
+          </ul>
+        </div>
+      </div>
+    </div>
+    <div id="charts-container">
+      <svg id="oi-chart" class="mini-chart"></svg>
+      <svg id="vol-chart" class="mini-chart"></svg>
+      <div id="chart-tooltip"></div>
+    </div>
+  </div>
+  <div id="chart"></div>
+
+  <script type="module">
+    import * as d3 from "https://cdn.jsdelivr.net/npm/d3@7/+esm";
+    import {sankey as d3Sankey, sankeyLinkHorizontal} from 'https://cdn.jsdelivr.net/npm/d3-sankey@0.12.3/+esm';
+
+    const MONTH_MAP = {JAN: 1, FEB: 2, MAR: 3, APR: 4, MAY: 5, JUN: 6, JUL: 7, AUG: 8, SEP: 9, OCT: 10, NOV: 11, DEC: 12};
+
+    function cleanNumber(v) {
+      if (v === null || v === undefined) return 0;
+      if (typeof v === 'number') return v | 0;
+      const s = String(v).trim();
+      if (s === '' || s === '-') return 0;
+      return parseInt(s.replace(/,/g, ''), 10) || 0;
+    }
+
+    function parseMonthID(monthID) {
+      const parts = String(monthID).split('-');
+      const m = MONTH_MAP[(parts[0] || '').toUpperCase()] || 0;
+      const yRaw = parts[1] || '9999';
+      const yNum = /^[0-9]{2}$/.test(yRaw) ? (2000 + parseInt(yRaw, 10)) :
+        /^[0-9]{4}$/.test(yRaw) ? parseInt(yRaw, 10) : 9999;
+      return [yNum, m, monthID];
+    }
+
+    function fmtMMDD(yyyymmdd) {
+      const s = String(yyyymmdd);
+      return `${s.slice(4, 6)}/${s.slice(6, 8)}`;
+    }
+
+    function fmtContract(monthID) {
+      return String(monthID).replace('-Calls', '').replace('-', ' ');
+    }
+
+    async function fetchJSON(url) {
+      const r = await fetch(url);
+      if (!r.ok) throw new Error(`HTTP ${r.status} for ${url}`);
+      return await r.json();
+    }
+
+    async function loadAllData() {
+      const manifest = await fetchJSON('silver/manifest.json');
+      const docs = await Promise.all(manifest.map(f => fetchJSON('silver/' + f)));
+      return docs;
+    }
+
+    function getContractValue(dayData, contract, metric) {
+      for (const item of dayData.monthData || []) {
+        if (item.monthID === contract) {
+          return cleanNumber(item[metric]);
+        }
+      }
+      return 0;
+    }
+
+    function buildRollingGraph(data) {
+      // For each day, get current month + next 5 months that have data
+      const contractsByDay = new Map();
+      
+      data.forEach(dayData => {
+        const tradeDate = dayData.tradeDate;
+        const year = parseInt(tradeDate.slice(0, 4));
+        const month = parseInt(tradeDate.slice(4, 6));
+        
+        // Get all contracts with their parsed dates
+        const contractsWithDates = (dayData.monthData || [])
+          .filter(item => cleanNumber(item.atClose) > 0)
+          .map(item => {
+            const [y, m] = parseMonthID(item.monthID);
+            return {
+              contract: item.monthID,
+              year: y,
+              month: m,
+              oi: cleanNumber(item.atClose)
+            };
+          })
+          .filter(c => c.year !== 9999) // Filter out invalid dates
+          .sort((a, b) => {
+            if (a.year !== b.year) return a.year - b.year;
+            return a.month - b.month;
+          });
+        
+        // Take up to 7 contracts starting from current/next month
+        const dayContracts = contractsWithDates
+          .slice(0, 7)
+          .map(c => c.contract);
+        
+        contractsByDay.set(tradeDate, dayContracts);
+      });
+      
+      // Collect all unique contracts
+      const allContracts = new Set();
+      contractsByDay.forEach(contracts => {
+        contracts.forEach(c => allContracts.add(c));
+      });
+      
+      const contracts = [...allContracts].sort((a, b) => {
+        const pa = parseMonthID(a), pb = parseMonthID(b);
+        if (pa[0] !== pb[0]) return pa[0] - pb[0];
+        if (pa[1] !== pb[1]) return pa[1] - pb[1];
+        return String(pa[2]).localeCompare(String(pb[2]));
+      });
+
+      const nodes = [];
+      const links = [];
+
+      // Create simple nodes: just contracts for each day, plus single EXT_IN/EXT_OUT per day
+      for (let dayIdx = 0; dayIdx < data.length; dayIdx++) {
+        const date = data[dayIdx].tradeDate;
+        const dayContracts = contractsByDay.get(date) || [];
+        
+        // Contract nodes for this day (only if in top 6 for this day)
+        for (const contract of dayContracts) {
+          nodes.push({
+            id: `${date}_${contract}`,
+            name: fmtContract(contract),
+            date: date,
+            column: dayIdx,
+            contract: contract,
+            isExt: false
+          });
+        }
+        
+        // Single EXT_IN for this day (where inflows are needed)
+        if (dayIdx > 0) {
+          nodes.push({
+            id: `${date}_EXT_IN`,
+            name: `Added`,
+            date: date,
+            column: dayIdx,
+            isExt: true
+          });
+        }
+        
+        // Single EXT_OUT for this day (receives outflows from previous day)
+        if (dayIdx > 0) {
+          nodes.push({
+            id: `${date}_EXT_OUT`,
+            name: `Removed`,
+            date: date,
+            column: dayIdx,
+            isExt: true
+          });
+        }
+      }
+
+      // Create flows between adjacent days
+      for (let dayIdx = 0; dayIdx < data.length - 1; dayIdx++) {
+        const currDay = data[dayIdx];
+        const nextDay = data[dayIdx + 1];
+        const currDate = currDay.tradeDate;
+        const nextDate = nextDay.tradeDate;
+
+        // Step 1: Create base flows (contract to same contract)
+        const surpluses = []; // contracts with extra to give
+        const deficits = [];  // contracts needing more
+
+        for (const contract of contracts) {
+          const currValue = getContractValue(currDay, contract, 'atClose');
+          const nextValue = getContractValue(nextDay, contract, 'atClose');
+          
+          // Base flow: contract flows to itself (minimum of curr and next)
+          const baseFlow = Math.min(currValue, nextValue);
+          if (baseFlow > 0) {
+            const sourceNode = nodes.find(n => n.id === `${currDate}_${contract}`);
+            const targetNode = nodes.find(n => n.id === `${nextDate}_${contract}`);
+            if (sourceNode && targetNode) {
+              links.push({
+                source: nodes.indexOf(sourceNode),
+                target: nodes.indexOf(targetNode),
+                value: baseFlow
+              });
+            }
+          }
+          
+          // Track surpluses and deficits
+          const difference = nextValue - currValue;
+          if (difference > 0) {
+            deficits.push({ contract, needed: difference });
+          } else if (difference < 0) {
+            surpluses.push({ contract, available: Math.abs(difference) });
+          }
+        }
+
+        // Step 2: Route surpluses to deficits
+        for (const deficit of deficits) {
+          let stillNeeded = deficit.needed;
+          
+          // Try to get from surpluses first
+          for (const surplus of surpluses) {
+            if (stillNeeded <= 0 || surplus.available <= 0) continue;
+            
+            const flow = Math.min(stillNeeded, surplus.available);
+            const sourceNode = nodes.find(n => n.id === `${currDate}_${surplus.contract}`);
+            const targetNode = nodes.find(n => n.id === `${nextDate}_${deficit.contract}`);
+            if (sourceNode && targetNode) {
+              links.push({
+                source: nodes.indexOf(sourceNode),
+                target: nodes.indexOf(targetNode),
+                value: flow
+              });
+            }
+            
+            surplus.available -= flow;
+            stillNeeded -= flow;
+          }
+          
+          // If still needed, get from EXT_IN (from previous day)
+          if (stillNeeded > 0) {
+            const sourceNode = nodes.find(n => n.id === `${currDate}_EXT_IN`);
+            const targetNode = nodes.find(n => n.id === `${nextDate}_${deficit.contract}`);
+            if (sourceNode && targetNode) {
+              links.push({
+                source: nodes.indexOf(sourceNode),
+                target: nodes.indexOf(targetNode),
+                value: stillNeeded
+              });
+            }
+          }
+        }
+
+        // Step 3: Route remaining surpluses to EXT_OUT (next day)
+        for (const surplus of surpluses) {
+          if (surplus.available > 0) {
+            const sourceNode = nodes.find(n => n.id === `${currDate}_${surplus.contract}`);
+            const targetNode = nodes.find(n => n.id === `${nextDate}_EXT_OUT`);
+            if (sourceNode && targetNode) {
+              links.push({
+                source: nodes.indexOf(sourceNode),
+                target: nodes.indexOf(targetNode),
+                value: surplus.available
+              });
+            }
+          }
+        }
+      }
+
+      // Prune unused EXT nodes (those with no links)
+      const usedNodeIds = new Set();
+      for (const link of links) {
+        usedNodeIds.add(nodes[link.source].id);
+        usedNodeIds.add(nodes[link.target].id);
+      }
+      
+      const filteredNodes = nodes.filter(node => {
+        // Keep all contract nodes, only filter EXT nodes
+        return !node.isExt || usedNodeIds.has(node.id);
+      });
+      
+      // Update link indices after filtering
+      const nodeIndexMap = new Map();
+      filteredNodes.forEach((node, index) => {
+        nodeIndexMap.set(node.id, index);
+      });
+      
+      const filteredLinks = links.map(link => ({
+        source: nodeIndexMap.get(nodes[link.source].id),
+        target: nodeIndexMap.get(nodes[link.target].id),
+        value: link.value
+      }));
+
+      // Sort links so that links from "Added" come before links from same contract
+      // This controls the vertical ordering of bands at each node
+      filteredLinks.sort((a, b) => {
+        const sourceA = filteredNodes[a.source];
+        const sourceB = filteredNodes[b.source];
+        const targetA = filteredNodes[a.target];
+        const targetB = filteredNodes[b.target];
+        
+        // If same target, prioritize Added source over contract source
+        if (a.target === b.target) {
+          const aIsAdded = sourceA.isExt && sourceA.name.includes('Added');
+          const bIsAdded = sourceB.isExt && sourceB.name.includes('Added');
+          
+          if (aIsAdded && !bIsAdded) return -1;
+          if (!aIsAdded && bIsAdded) return 1;
+        }
+        
+        return 0;
+      });
+
+      return { nodes: filteredNodes, links: filteredLinks };
+    }
+
+    function renderMiniCharts(data) {
+      const totals = data.map(dayData => {
+        const dateStr = dayData.tradeDate;
+        const dateObj = new Date(dateStr.slice(0,4), parseInt(dateStr.slice(4,6))-1, dateStr.slice(6,8));
+        const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
+        return {
+          date: dayData.tradeDate,
+          dayName: dayName,
+          oi: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.atClose), 0),
+          vol: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.totalVolume), 0)
+        };
+      });
+
+      const barWidth = 8;
+      const barGap = 2;
+      const margin = { top: 5, right: 5, bottom: 18, left: 50 };
+      const width = (barWidth + barGap) * totals.length - barGap;
+      const height = 80 - margin.top - margin.bottom;
+      
+      const tooltip = d3.select('#chart-tooltip');
+
+      // OI Chart
+      const oiSvg = d3.select('#oi-chart');
+      oiSvg.selectAll('*').remove();
+      oiSvg.attr('width', width + margin.left + margin.right);
+      const oiG = oiSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      
+      const maxOI = d3.max(totals, d => d.oi);
+      const oiScale = d3.scaleLinear().domain([0, maxOI]).range([height, 0]);
+      
+      oiG.selectAll('rect')
+        .data(totals)
+        .join('rect')
+        .attr('x', (d, i) => i * (barWidth + barGap))
+        .attr('y', d => oiScale(d.oi))
+        .attr('width', barWidth)
+        .attr('height', d => height - oiScale(d.oi))
+        .attr('fill', '#4682b4')
+        .on('mouseover', function(event, d) {
+          tooltip.style('display', 'block')
+            .html(`${d.dayName}, ${fmtMMDD(d.date)}<br/>Total OI: ${d.oi.toLocaleString()}`);
+        })
+        .on('mousemove', function(event) {
+          tooltip.style('left', (event.clientX - tooltip.node().offsetWidth - 15) + 'px')
+            .style('top', (event.clientY - 30) + 'px');
+        })
+        .on('mouseout', function() {
+          tooltip.style('display', 'none');
+        });
+      
+      oiG.append('text')
+        .attr('x', -5)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text('Total OI');
+      
+      // Y-axis line
+      oiG.append('line')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', 0)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Baseline
+      oiG.append('line')
+        .attr('x1', 0)
+        .attr('y1', height)
+        .attr('x2', width)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Y-axis label (max only)
+      oiG.append('text')
+        .attr('x', -5)
+        .attr('y', 0)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '9px')
+        .text((maxOI / 1000).toFixed(0) + 'k');
+      
+      // X-axis labels (first and last)
+      oiG.append('text')
+        .attr('x', 0)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'start')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[0].date));
+      
+      oiG.append('text')
+        .attr('x', width)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'end')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[totals.length - 1].date));
+
+      // Volume Chart
+      const volSvg = d3.select('#vol-chart');
+      volSvg.selectAll('*').remove();
+      volSvg.attr('width', width + margin.left + margin.right);
+      const volG = volSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      
+      const maxVol = d3.max(totals, d => d.vol);
+      const volScale = d3.scaleLinear().domain([0, maxVol]).range([height, 0]);
+      
+      volG.selectAll('rect')
+        .data(totals)
+        .join('rect')
+        .attr('x', (d, i) => i * (barWidth + barGap))
+        .attr('y', d => volScale(d.vol))
+        .attr('width', barWidth)
+        .attr('height', d => height - volScale(d.vol))
+        .attr('fill', '#ff7f0e')
+        .on('mouseover', function(event, d) {
+          tooltip.style('display', 'block')
+            .html(`${d.dayName}, ${fmtMMDD(d.date)}<br/>Total Volume: ${d.vol.toLocaleString()}`);
+        })
+        .on('mousemove', function(event) {
+          tooltip.style('left', (event.clientX - tooltip.node().offsetWidth - 15) + 'px')
+            .style('top', (event.clientY - 30) + 'px');
+        })
+        .on('mouseout', function() {
+          tooltip.style('display', 'none');
+        });
+      
+      volG.append('text')
+        .attr('x', -5)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text('Total Vol');
+      
+      // Y-axis line
+      volG.append('line')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', 0)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Baseline
+      volG.append('line')
+        .attr('x1', 0)
+        .attr('y1', height)
+        .attr('x2', width)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Y-axis label (max only)
+      volG.append('text')
+        .attr('x', -5)
+        .attr('y', 0)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '9px')
+        .text((maxVol / 1000).toFixed(0) + 'k');
+      
+      // X-axis labels (first and last)
+      volG.append('text')
+        .attr('x', 0)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'start')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[0].date));
+      
+      volG.append('text')
+        .attr('x', width)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'end')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[totals.length - 1].date));
+    }
+
+    function render(data) {
+      const container = d3.select('#chart');
+      container.selectAll('*').remove();
+      
+      // Render mini charts in header
+      renderMiniCharts(data);
+      
+      const graph = buildRollingGraph(data);
+      
+      const margin = { top: 20, right: 20, bottom: 80, left: 150 };
+      const dayWidth = 350; // Fixed width per day
+      const width = dayWidth * data.length;
+      const height = container.node().clientHeight - margin.top - margin.bottom;
+      
+      const svg = container.append('svg')
+        .attr('width', width + margin.left + margin.right)
+        .attr('height', height + margin.top + margin.bottom);
+        
+      const g = svg.append('g')
+        .attr('transform', `translate(${margin.left},${margin.top})`);
+
+      // Set up sankey generator 
+      const sankey = d3Sankey()
+        .nodeWidth(15)
+        .nodePadding(14)
+        .nodeSort(null)
+        .linkSort((a, b) => {
+          // Sort links so Added sources come first (top) at each target
+          const sourceA = a.source;
+          const sourceB = b.source;
+          
+          const aIsAdded = sourceA.isExt && sourceA.name && sourceA.name.includes('Added');
+          const bIsAdded = sourceB.isExt && sourceB.name && sourceB.name.includes('Added');
+          
+          if (aIsAdded && !bIsAdded) return -1;
+          if (!aIsAdded && bIsAdded) return 1;
+          return 0;
+        })
+        .extent([[1, 1], [width - 1, height - 6]]);
+
+      const sankeyData = sankey({
+        nodes: graph.nodes,
+        links: graph.links
+      });
+
+      // Force column positions but let D3 handle node heights
+      const columnWidth = width / data.length;
+      
+      // First preserve original properties
+      sankeyData.nodes.forEach(node => {
+        const originalNode = graph.nodes.find(n => n.id === node.id);
+        if (originalNode) {
+          Object.assign(node, originalNode);
+        }
+      });
+      
+      // Group nodes by column and sort them properly
+      const nodesByColumn = {};
+      sankeyData.nodes.forEach(node => {
+        if (!nodesByColumn[node.column]) {
+          nodesByColumn[node.column] = [];
+        }
+        nodesByColumn[node.column].push(node);
+      });
+      
+      // Sort nodes within each column and reposition
+      Object.keys(nodesByColumn).forEach(col => {
+        const nodesInColumn = nodesByColumn[col];
+        
+        // First, separate nodes by type
+        const addedNode = nodesInColumn.find(n => n.isExt && n.name.includes('Added'));
+        const removedNode = nodesInColumn.find(n => n.isExt && n.name.includes('Removed'));
+        const contractNodes = nodesInColumn.filter(n => !n.isExt);
+        
+        // Sort contracts chronologically
+        contractNodes.sort((a, b) => {
+          const pa = parseMonthID(a.contract);
+          const pb = parseMonthID(b.contract);
+          if (pa[0] !== pb[0]) return pa[0] - pb[0];
+          if (pa[1] !== pb[1]) return pa[1] - pb[1];
+          return String(pa[2]).localeCompare(String(pb[2]));
+        });
+        
+        // Find where to insert Added node
+        let sortedNodes = [...contractNodes];
+        if (addedNode) {
+          // Find contracts in NEXT day that receive flow from Added
+          const addedTargets = sankeyData.links
+            .filter(link => link.source === addedNode && !link.target.isExt)
+            .map(link => link.target);
+          
+          if (addedTargets.length > 0) {
+            // Sort targets chronologically and get the first one
+            const sortedTargets = addedTargets.sort((a, b) => {
+              const pa = parseMonthID(a.contract);
+              const pb = parseMonthID(b.contract);
+              if (pa[0] !== pb[0]) return pa[0] - pb[0];
+              if (pa[1] !== pb[1]) return pa[1] - pb[1];
+              return String(pa[2]).localeCompare(String(pb[2]));
+            });
+            const firstTargetContract = sortedTargets[0].contract;
+            
+            // Find where this target contract would be positioned in current day
+            const insertIndex = sortedNodes.findIndex(n => {
+              const pn = parseMonthID(n.contract);
+              const pt = parseMonthID(firstTargetContract);
+              if (pn[0] !== pt[0]) return pn[0] >= pt[0];
+              if (pn[1] !== pt[1]) return pn[1] >= pt[1];
+              return String(pn[2]).localeCompare(String(pt[2])) >= 0;
+            });
+            
+            if (insertIndex >= 0) {
+              sortedNodes.splice(insertIndex, 0, addedNode);
+            } else {
+              sortedNodes.push(addedNode); // After all contracts
+            }
+          } else {
+            sortedNodes.unshift(addedNode); // Default to top
+          }
+        }
+        
+        // Add Removed node right after the last contract that flows to it
+        if (removedNode) {
+          // Find contracts that flow to Removed
+          const removedSources = sankeyData.links
+            .filter(link => link.target === removedNode && !link.source.isExt)
+            .map(link => link.source);
+          
+          if (removedSources.length > 0) {
+            // Find the last source in our sorted list
+            const lastSourceIndex = sortedNodes.reduce((maxIdx, n, idx) => {
+              if (removedSources.some(s => s.contract === n.contract)) {
+                return idx;
+              }
+              return maxIdx;
+            }, -1);
+            
+            if (lastSourceIndex >= 0) {
+              sortedNodes.splice(lastSourceIndex + 1, 0, removedNode);
+            } else {
+              sortedNodes.push(removedNode); // Default to bottom
+            }
+          } else {
+            sortedNodes.push(removedNode);
+          }
+        }
+        
+        // Replace the column's nodes with sorted order
+        nodesInColumn.length = 0;
+        nodesInColumn.push(...sortedNodes);
+        
+        // Reposition Y coordinates while keeping D3's calculated heights
+        let currentY = 75; // Start lower to leave space for titles, headers, and day names
+        
+        nodesInColumn.forEach(node => {
+          const nodeHeight = node.y1 - node.y0; // Keep D3's original calculated height
+          node.x0 = parseInt(col) * columnWidth;
+          node.x1 = node.x0 + 15;
+          node.y0 = currentY;
+          node.y1 = currentY + nodeHeight;
+          currentY = node.y1 + 14; // Use same padding as nodePadding
+        });
+      });
+      
+      // Recalculate sankey layout with our new node positions
+      sankey.update(sankeyData);
+
+      // Recalculate sankey layout with fixed X positions
+      sankey.update(sankeyData);
+
+      // Create color scale for contracts
+      const contracts = [...new Set(graph.nodes.filter(n => !n.isExt).map(n => n.contract))];
+      const colorScale = d3.scaleOrdinal(d3.schemeTableau10.map(c => d3.color(c).darker(0.3))).domain(contracts);
+
+      // Calculate volume scale per contract
+      const contractVolumeScales = new Map();
+      contracts.forEach(contract => {
+        const volumes = data.map(dayData => getContractValue(dayData, contract, 'totalVolume')).filter(v => v > 0);
+        if (volumes.length > 0) {
+          const min = Math.min(...volumes);
+          const max = Math.max(...volumes);
+          contractVolumeScales.set(contract, d3.scaleLinear()
+            .domain([min, max])
+            .range([0.3, 1.0]));
+        }
+      });
+
+      // Draw links with proper Sankey curves
+      g.append('g')
+        .selectAll('path')
+        .data(sankeyData.links)
+        .join('path')
+        .attr('d', sankeyLinkHorizontal())
+        .attr('stroke', d => {
+          const sourceNode = d.source;
+          const targetNode = d.target;
+          // For Added node, use target contract color
+          if (sourceNode && sourceNode.isExt && sourceNode.name.includes('Added') && targetNode && targetNode.contract) {
+            return colorScale(targetNode.contract);
+          }
+          // For other External nodes, use gray
+          if (sourceNode && sourceNode.isExt) {
+            return '#999';
+          }
+          // For contract nodes, use their color
+          return sourceNode && sourceNode.contract ? colorScale(sourceNode.contract) : '#1f77b4';
+        })
+        .attr('stroke-width', d => Math.max(1, d.width))
+        .attr('fill', 'none')
+        .attr('class', 'link')
+        .style('opacity', d => {
+          const sourceNode = d.source;
+          const targetNode = d.target;
+          
+          // For Added bands, use target contract's volume on PREVIOUS day (to match the other incoming band)
+          if (sourceNode && sourceNode.isExt && sourceNode.name.includes('Added') && targetNode && targetNode.contract) {
+            const scale = contractVolumeScales.get(targetNode.contract);
+            if (scale && targetNode.column > 0) {
+              const prevDayData = data[targetNode.column - 1];
+              const volume = getContractValue(prevDayData, targetNode.contract, 'totalVolume');
+              return volume > 0 ? scale(volume) : 0.3;
+            }
+          }
+          
+          // For regular contract bands, use source contract's volume
+          if (sourceNode && !sourceNode.isExt && sourceNode.contract) {
+            const scale = contractVolumeScales.get(sourceNode.contract);
+            if (scale) {
+              const dayData = data.find(day => day.tradeDate === sourceNode.date);
+              const volume = getContractValue(dayData, sourceNode.contract, 'totalVolume');
+              return volume > 0 ? scale(volume) : 0.3;
+            }
+          }
+          return 0.6;
+        })
+        .append('title')
+        .text(d => `${d.source.name || 'Unknown'} → ${d.target.name || 'Unknown'}\n${d.value.toLocaleString()}`);
+
+      // Draw nodes
+      const node = g.append('g')
+        .selectAll('g')
+        .data(sankeyData.nodes)
+        .join('g')
+        .attr('class', 'node');
+
+      node.each(function(d) {
+        const g = d3.select(this);
+        
+        if (d.isExt) {
+          // Draw path with 3 sides for External nodes
+          const x0 = d.x0, y0 = d.y0, x1 = d.x1, y1 = d.y1;
+          let pathData;
+          if (d.name.includes('Added')) {
+            // Missing right border: top, left, bottom
+            pathData = `M ${x1} ${y0} L ${x0} ${y0} L ${x0} ${y1} L ${x1} ${y1}`;
+          } else {
+            // Missing left border: top, right, bottom
+            pathData = `M ${x0} ${y0} L ${x1} ${y0} L ${x1} ${y1} L ${x0} ${y1}`;
+          }
+          g.append('path')
+            .attr('d', pathData)
+            .attr('fill', 'white')
+            .attr('stroke', '#ccc')
+            .attr('stroke-width', 1);
+        } else {
+          // Regular rect for contract nodes
+          g.append('rect')
+            .attr('x', x0 => d.x0)
+            .attr('y', y0 => d.y0)
+            .attr('height', d => d.y1 - d.y0)
+            .attr('width', d => d.x1 - d.x0)
+            .attr('fill', () => {
+              // Empty fill for contracts appearing for the first time
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return 'white';
+                }
+              }
+              const color = colorScale(d.contract);
+              return color || '#1f77b4';
+            })
+            .attr('fill-opacity', 0.4)
+            .attr('stroke', () => {
+              const color = d3.color(colorScale(d.contract) || '#1f77b4');
+              return color.darker(0.5);
+            })
+            .attr('stroke-width', () => {
+              // Thicker stroke for new nodes
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return 2;
+                }
+              }
+              return 1;
+            })
+            .attr('stroke-dasharray', () => {
+              // Dashed border for contracts appearing for the first time
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return '5,3';
+                }
+              }
+              return null;
+            })
+            .append('title')
+            .text(`${fmtMMDD(d.date)} ${d.name}`);
+        }
+      });
+
+      node.append('text')
+        .attr('x', d => {
+          if (d.isExt && d.name.includes('Added')) return d.x0 - 6;
+          return d.x1 + 6;
+        })
+        .attr('y', d => (d.y1 + d.y0) / 2)
+        .attr('dy', '0.35em')
+        .attr('text-anchor', d => {
+          if (d.isExt && d.name.includes('Added')) return 'end';
+          return 'start';
+        })
+        .style('font-size', '12px')
+        .text(d => {
+          if (d.isExt) {
+            const total = (d.sourceLinks || []).reduce((sum, link) => sum + link.value, 0) +
+                         (d.targetLinks || []).reduce((sum, link) => sum + link.value, 0);
+            return `${d.name} | ${total.toLocaleString()}`;
+          } else {
+            const dayData = data.find(day => day.tradeDate === d.date);
+            const openInterest = getContractValue(dayData, d.contract, 'atClose');
+            const volume = getContractValue(dayData, d.contract, 'totalVolume');
+            return `${d.name} | OI: ${openInterest.toLocaleString()} | Vol: ${volume.toLocaleString()}`;
+          }
+        });
+
+      // Add column headers above the actual node columns
+      const actualColumnPositions = {};
+      sankeyData.nodes.forEach(node => {
+        if (!actualColumnPositions[node.column]) {
+          actualColumnPositions[node.column] = {
+            minX: node.x0,
+            maxX: node.x1,
+            date: node.date
+          };
+        } else {
+          actualColumnPositions[node.column].minX = Math.min(actualColumnPositions[node.column].minX, node.x0);
+          actualColumnPositions[node.column].maxX = Math.max(actualColumnPositions[node.column].maxX, node.x1);
+        }
+      });
+
+      const columnHeaders = Object.keys(actualColumnPositions).map(col => {
+        const pos = actualColumnPositions[col];
+        const dayData = data.find(d => d.tradeDate === pos.date);
+        // Calculate totals across ALL contracts in the data, not just displayed ones
+        const totalVolume = (dayData.monthData || []).reduce((sum, item) => 
+          sum + cleanNumber(item.totalVolume), 0);
+        const totalOI = (dayData.monthData || []).reduce((sum, item) => 
+          sum + cleanNumber(item.atClose), 0);
+        const dateObj = new Date(pos.date.slice(0,4), parseInt(pos.date.slice(4,6))-1, pos.date.slice(6,8));
+        const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
+        return {
+          x: (pos.minX + pos.maxX) / 2,
+          date: pos.date,
+          label: fmtMMDD(pos.date),
+          dayName,
+          totalVolume,
+          totalOI
+        };
+      });
+
+      g.selectAll('.column-header')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-header')
+        .attr('x', d => d.x)
+        .attr('y', 50)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '12px')
+        .style('font-weight', 'bold')
+        .text(d => d.label);
+
+      g.selectAll('.column-day')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-day')
+        .attr('x', d => d.x)
+        .attr('y', 62)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .style('font-weight', 'bold')
+        .text(d => d.dayName);
+
+      g.selectAll('.column-oi')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-oi')
+        .attr('x', d => d.x)
+        .attr('y', 38)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .text(d => `OI: ${d.totalOI.toLocaleString()}`);
+
+      g.selectAll('.column-volume')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-volume')
+        .attr('x', d => d.x)
+        .attr('y', 26)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .text(d => `Vol: ${d.totalVolume.toLocaleString()}`);
+    }
+
+    (async function main() {
+      let data = null;
+      
+      async function doRender() {
+        try {
+          if (!data) {
+            data = await loadAllData();
+          }
+          render(data);
+        } catch (e) {
+          console.error(e);
+        }
+      }
+
+      window.addEventListener('resize', doRender);
+      await doRender();
+      
+      // Scroll to the right
+      const chartDiv = document.getElementById('chart');
+      chartDiv.scrollLeft = chartDiv.scrollWidth;
+    })();
+  </script>
+</body>
+</html>

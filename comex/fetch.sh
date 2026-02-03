@@ -9,7 +9,7 @@ COOKIES='AKA_A2=A; ak_bmsc=73142335B37DF1B289DA7A4033C27035~00000000000000000000
 fetch_date() {
   local DATE=$1
   local FORMATTED_DATE="${DATE:0:4}-${DATE:4:2}-${DATE:6:2}"
-  local OUTPUT="${FORMATTED_DATE}-data.json"
+  local OUTPUT="silver/${FORMATTED_DATE}-data.json"
   
   # Skip if already exists
   if [ -f "$OUTPUT" ]; then
@@ -36,12 +36,11 @@ fetch_date() {
   if [ -s "$OUTPUT" ]; then
     echo "Fetched data to $OUTPUT"
     
-    # Add to manifest if not already there
-    if ! grep -q "\"${OUTPUT}\"" manifest.json; then
-      jq ". += [\"${OUTPUT}\"] | sort" manifest.json > manifest.json.tmp
-      mv manifest.json.tmp manifest.json
-      echo "Added $OUTPUT to manifest.json"
-    fi
+    # Update manifest
+    cd silver
+    jq ". += [\"${FORMATTED_DATE}-data.json\"] | sort | unique" manifest.json > manifest.json.tmp
+    mv manifest.json.tmp manifest.json
+    cd ..
   else
     echo "Failed to fetch $DATE"
     rm -f "$OUTPUT"
