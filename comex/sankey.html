@@ -12,9 +12,11 @@
     #header p { margin: 4px 0; line-height: 1.4; font-size: 13px; }
     #header ul { margin: 4px 0; padding-left: 18px; line-height: 1.4; font-size: 13px; }
     #header a { color: #0066cc; }
-    #charts-container { display: flex; flex-direction: column; gap: 8px; }
-    .mini-chart { width: 300px; height: 40px; }
+    #charts-container { display: flex; flex-direction: column; gap: 8px; position: relative; }
+    .mini-chart { width: 300px; height: 80px; }
     .mini-chart text { font-size: 10px; fill: #666; }
+    .mini-chart rect { cursor: crosshair; }
+    #chart-tooltip { position: fixed; background: rgba(0,0,0,0.8); color: white; padding: 5px 8px; border-radius: 3px; font-size: 11px; pointer-events: none; display: none; white-space: nowrap; z-index: 1000; }
     #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
     
     .node rect { stroke-width: 1px; }
@@ -51,6 +53,7 @@
     <div id="charts-container">
       <svg id="oi-chart" class="mini-chart"></svg>
       <svg id="vol-chart" class="mini-chart"></svg>
+      <div id="chart-tooltip"></div>
     </div>
   </div>
   <div id="chart"></div>
@@ -344,9 +347,11 @@
         vol: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.totalVolume), 0)
       }));
 
-      const margin = { top: 15, right: 5, bottom: 15, left: 50 };
+      const margin = { top: 5, right: 5, bottom: 18, left: 50 };
       const width = 300 - margin.left - margin.right;
-      const height = 40 - margin.top - margin.bottom;
+      const height = 80 - margin.top - margin.bottom;
+      
+      const tooltip = d3.select('#chart-tooltip');
 
       // OI Chart
       const oiSvg = d3.select('#oi-chart');
@@ -354,7 +359,8 @@
       const oiG = oiSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
       
       const xScale = d3.scaleBand().domain(totals.map(d => d.date)).range([0, width]).padding(0.1);
-      const oiScale = d3.scaleLinear().domain([0, d3.max(totals, d => d.oi)]).range([height, 0]);
+      const maxOI = d3.max(totals, d => d.oi);
+      const oiScale = d3.scaleLinear().domain([0, maxOI]).range([height, 0]);
       
       oiG.selectAll('rect')
         .data(totals)
@@ -363,7 +369,18 @@
         .attr('y', d => oiScale(d.oi))
         .attr('width', xScale.bandwidth())
         .attr('height', d => height - oiScale(d.oi))
-        .attr('fill', '#4682b4');
+        .attr('fill', '#4682b4')
+        .on('mouseover', function(event, d) {
+          tooltip.style('display', 'block')
+            .html(`${fmtMMDD(d.date)}<br/>Total OI: ${d.oi.toLocaleString()}`);
+        })
+        .on('mousemove', function(event) {
+          tooltip.style('left', (event.clientX + 15) + 'px')
+            .style('top', (event.clientY - 30) + 'px');
+        })
+        .on('mouseout', function() {
+          tooltip.style('display', 'none');
+        });
       
       oiG.append('text')
         .attr('x', -5)
@@ -371,13 +388,56 @@
         .attr('text-anchor', 'end')
         .attr('dominant-baseline', 'middle')
         .text('Total OI');
+      
+      // Y-axis line
+      oiG.append('line')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', 0)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Baseline
+      oiG.append('line')
+        .attr('x1', 0)
+        .attr('y1', height)
+        .attr('x2', width)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Y-axis label (max only)
+      oiG.append('text')
+        .attr('x', -5)
+        .attr('y', 0)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '9px')
+        .text((maxOI / 1000).toFixed(0) + 'k');
+      
+      // X-axis labels (first and last)
+      oiG.append('text')
+        .attr('x', 0)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'start')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[0].date));
+      
+      oiG.append('text')
+        .attr('x', width)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'end')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[totals.length - 1].date));
 
       // Volume Chart
       const volSvg = d3.select('#vol-chart');
       volSvg.selectAll('*').remove();
       const volG = volSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
       
-      const volScale = d3.scaleLinear().domain([0, d3.max(totals, d => d.vol)]).range([height, 0]);
+      const maxVol = d3.max(totals, d => d.vol);
+      const volScale = d3.scaleLinear().domain([0, maxVol]).range([height, 0]);
       
       volG.selectAll('rect')
         .data(totals)
@@ -386,7 +446,18 @@
         .attr('y', d => volScale(d.vol))
         .attr('width', xScale.bandwidth())
         .attr('height', d => height - volScale(d.vol))
-        .attr('fill', '#ff7f0e');
+        .attr('fill', '#ff7f0e')
+        .on('mouseover', function(event, d) {
+          tooltip.style('display', 'block')
+            .html(`${fmtMMDD(d.date)}<br/>Total Volume: ${d.vol.toLocaleString()}`);
+        })
+        .on('mousemove', function(event) {
+          tooltip.style('left', (event.clientX + 15) + 'px')
+            .style('top', (event.clientY - 30) + 'px');
+        })
+        .on('mouseout', function() {
+          tooltip.style('display', 'none');
+        });
       
       volG.append('text')
         .attr('x', -5)
@@ -394,6 +465,48 @@
         .attr('text-anchor', 'end')
         .attr('dominant-baseline', 'middle')
         .text('Total Vol');
+      
+      // Y-axis line
+      volG.append('line')
+        .attr('x1', 0)
+        .attr('y1', 0)
+        .attr('x2', 0)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Baseline
+      volG.append('line')
+        .attr('x1', 0)
+        .attr('y1', height)
+        .attr('x2', width)
+        .attr('y2', height)
+        .attr('stroke', '#999')
+        .attr('stroke-width', 1);
+      
+      // Y-axis label (max only)
+      volG.append('text')
+        .attr('x', -5)
+        .attr('y', 0)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .style('font-size', '9px')
+        .text((maxVol / 1000).toFixed(0) + 'k');
+      
+      // X-axis labels (first and last)
+      volG.append('text')
+        .attr('x', 0)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'start')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[0].date));
+      
+      volG.append('text')
+        .attr('x', width)
+        .attr('y', height + 12)
+        .attr('text-anchor', 'end')
+        .style('font-size', '9px')
+        .text(fmtMMDD(totals[totals.length - 1].date));
     }
 
     function render(data) {
