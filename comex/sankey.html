@@ -2,18 +2,32 @@
 <html>
 <head>
   <meta charset="utf-8" />
-  <title>COMEX Rolling Sankey - D3 Fixed</title>
+  <title>COMEX Silver Open Interest Flow</title>
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
-    #chart { height: 100%; }
+    #header { padding: 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; }
+    #header h1 { margin: 0 0 10px 0; font-size: 24px; }
+    #header p { margin: 5px 0; line-height: 1.6; }
+    #header a { color: #0066cc; }
+    #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
     
-    .node rect { fill: #1f77b4; stroke: #000; stroke-width: 1px; }
+    .node rect { stroke-width: 1px; }
     .node text { font-size: 12px; fill: #000; }
     .link { fill: none; stroke-opacity: 0.6; }
     .link:hover { stroke-opacity: 0.8; }
   </style>
 </head>
 <body>
+  <div id="header">
+    <h1>COMEX Silver Open Interest Flow</h1>
+    <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures Volume</a></p>
+    <p>This Sankey diagram visualizes the flow of <a href="https://www.investopedia.com/terms/o/openinterest.asp" target="_blank">Open Interest (OI)</a> across different <a href="https://www.investopedia.com/terms/f/futures.asp" target="_blank">futures</a> contract months over time. The width of each band represents the amount of OI, while the opacity (darkness) represents <a href="https://www.investopedia.com/terms/v/volume.asp" target="_blank">trading volume</a> - darker bands indicate higher volume for that contract on that day.</p>
+    <p><strong>Important Disclaimers:</strong></p>
+    <ul style="margin: 5px 0; padding-left: 20px;">
+      <li>OI data does not distinguish between long and short positions.</li>
+      <li>Flow routing between contracts and "External IN/OUT" nodes is calculated using a bucket-fill algorithm. We know the aggregate OI changes but not the exact movement between specific contracts. "External IN" represents new positions entering the market, while "External OUT" represents positions being closed.</li>
+    </ul>
+  </div>
   <div id="chart"></div>
 
   <script type="module">
@@ -70,36 +84,47 @@
     }
 
     function buildRollingGraph(data) {
-      // Get only the top 4-5 most active contracts
+      // For each day, get current month + next 5 months that have data
+      const contractsByDay = new Map();
+      
+      data.forEach(dayData => {
+        const tradeDate = dayData.tradeDate;
+        const year = parseInt(tradeDate.slice(0, 4));
+        const month = parseInt(tradeDate.slice(4, 6));
+        
+        // Get all contracts with their parsed dates
+        const contractsWithDates = (dayData.monthData || [])
+          .filter(item => cleanNumber(item.atClose) > 0)
+          .map(item => {
+            const [y, m] = parseMonthID(item.monthID);
+            return {
+              contract: item.monthID,
+              year: y,
+              month: m,
+              oi: cleanNumber(item.atClose)
+            };
+          })
+          .filter(c => c.year !== 9999) // Filter out invalid dates
+          .sort((a, b) => {
+            if (a.year !== b.year) return a.year - b.year;
+            return a.month - b.month;
+          });
+        
+        // Take up to 7 contracts starting from current/next month
+        const dayContracts = contractsWithDates
+          .slice(0, 7)
+          .map(c => c.contract);
+        
+        contractsByDay.set(tradeDate, dayContracts);
+      });
+      
+      // Collect all unique contracts
       const allContracts = new Set();
-      const contractActivity = new Map();
+      contractsByDay.forEach(contracts => {
+        contracts.forEach(c => allContracts.add(c));
+      });
       
-      for (const dayData of data) {
-        for (const item of dayData.monthData || []) {
-          allContracts.add(item.monthID);
-        }
-      }
-      
-      // Calculate total activity for each contract
-      for (const contract of allContracts) {
-        let totalChange = 0;
-        for (let i = 0; i < data.length - 1; i++) {
-          const curr = getContractValue(data[i], contract, 'atClose');
-          const next = getContractValue(data[i + 1], contract, 'atClose');
-          totalChange += Math.abs(next - curr);
-        }
-        contractActivity.set(contract, totalChange);
-      }
-      
-      // Take only top 4 contracts
-      const topContracts = [...contractActivity.entries()]
-        .filter(([, activity]) => activity > 0)
-        .sort((a, b) => b[1] - a[1])
-        .slice(0, 4)
-        .map(([contract]) => contract);
-      
-      // Sort chronologically
-      const contracts = topContracts.sort((a, b) => {
+      const contracts = [...allContracts].sort((a, b) => {
         const pa = parseMonthID(a), pb = parseMonthID(b);
         if (pa[0] !== pb[0]) return pa[0] - pb[0];
         if (pa[1] !== pb[1]) return pa[1] - pb[1];
@@ -112,9 +137,10 @@
       // Create simple nodes: just contracts for each day, plus single EXT_IN/EXT_OUT per day
       for (let dayIdx = 0; dayIdx < data.length; dayIdx++) {
         const date = data[dayIdx].tradeDate;
+        const dayContracts = contractsByDay.get(date) || [];
         
-        // Contract nodes for this day
-        for (const contract of contracts) {
+        // Contract nodes for this day (only if in top 6 for this day)
+        for (const contract of dayContracts) {
           nodes.push({
             id: `${date}_${contract}`,
             name: fmtContract(contract),
@@ -129,7 +155,7 @@
         if (dayIdx > 0) {
           nodes.push({
             id: `${date}_EXT_IN`,
-            name: `External IN`,
+            name: `Added`,
             date: date,
             column: dayIdx,
             isExt: true
@@ -140,7 +166,7 @@
         if (dayIdx > 0) {
           nodes.push({
             id: `${date}_EXT_OUT`,
-            name: `External OUT`,
+            name: `Removed`,
             date: date,
             column: dayIdx,
             isExt: true
@@ -263,6 +289,26 @@
         value: link.value
       }));
 
+      // Sort links so that links from "Added" come before links from same contract
+      // This controls the vertical ordering of bands at each node
+      filteredLinks.sort((a, b) => {
+        const sourceA = filteredNodes[a.source];
+        const sourceB = filteredNodes[b.source];
+        const targetA = filteredNodes[a.target];
+        const targetB = filteredNodes[b.target];
+        
+        // If same target, prioritize Added source over contract source
+        if (a.target === b.target) {
+          const aIsAdded = sourceA.isExt && sourceA.name.includes('Added');
+          const bIsAdded = sourceB.isExt && sourceB.name.includes('Added');
+          
+          if (aIsAdded && !bIsAdded) return -1;
+          if (!aIsAdded && bIsAdded) return 1;
+        }
+        
+        return 0;
+      });
+
       return { nodes: filteredNodes, links: filteredLinks };
     }
 
@@ -272,8 +318,9 @@
       
       const graph = buildRollingGraph(data);
       
-      const margin = { top: 20, right: 20, bottom: 80, left: 20 }; // Much more generous bottom margin
-      const width = container.node().clientWidth - margin.left - margin.right;
+      const margin = { top: 20, right: 20, bottom: 80, left: 150 };
+      const dayWidth = 350; // Fixed width per day
+      const width = dayWidth * data.length;
       const height = container.node().clientHeight - margin.top - margin.bottom;
       
       const svg = container.append('svg')
@@ -286,7 +333,20 @@
       // Set up sankey generator 
       const sankey = d3Sankey()
         .nodeWidth(15)
-        .nodePadding(10)
+        .nodePadding(14)
+        .nodeSort(null)
+        .linkSort((a, b) => {
+          // Sort links so Added sources come first (top) at each target
+          const sourceA = a.source;
+          const sourceB = b.source;
+          
+          const aIsAdded = sourceA.isExt && sourceA.name && sourceA.name.includes('Added');
+          const bIsAdded = sourceB.isExt && sourceB.name && sourceB.name.includes('Added');
+          
+          if (aIsAdded && !bIsAdded) return -1;
+          if (!aIsAdded && bIsAdded) return 1;
+          return 0;
+        })
         .extent([[1, 1], [width - 1, height - 6]]);
 
       const sankeyData = sankey({
@@ -318,26 +378,76 @@
       Object.keys(nodesByColumn).forEach(col => {
         const nodesInColumn = nodesByColumn[col];
         
-        // Sort: contracts chronologically first, then EXT_IN, then EXT_OUT last
-        nodesInColumn.sort((a, b) => {
-          if (a.isExt && a.name.includes('OUT')) return 1;
-          if (b.isExt && a.name.includes('OUT')) return -1;
-          if (a.isExt && a.name.includes('IN')) return 1;
-          if (b.isExt && b.name.includes('IN')) return -1;
-          
-          if (!a.isExt && !b.isExt) {
-            const pa = parseMonthID(a.contract);
-            const pb = parseMonthID(b.contract);
-            if (pa[0] !== pb[0]) return pa[0] - pb[0];
-            if (pa[1] !== pb[1]) return pa[1] - pb[1];
-            return String(pa[2]).localeCompare(String(pb[2]));
-          }
-          
-          return 0;
+        // First, separate nodes by type
+        const addedNode = nodesInColumn.find(n => n.isExt && n.name.includes('Added'));
+        const removedNode = nodesInColumn.find(n => n.isExt && n.name.includes('Removed'));
+        const contractNodes = nodesInColumn.filter(n => !n.isExt);
+        
+        // Sort contracts chronologically
+        contractNodes.sort((a, b) => {
+          const pa = parseMonthID(a.contract);
+          const pb = parseMonthID(b.contract);
+          if (pa[0] !== pb[0]) return pa[0] - pb[0];
+          if (pa[1] !== pb[1]) return pa[1] - pb[1];
+          return String(pa[2]).localeCompare(String(pb[2]));
         });
         
+        // Find where to insert Added node
+        let sortedNodes = [...contractNodes];
+        if (addedNode) {
+          // Find first contract that receives flow from Added
+          const addedTargets = sankeyData.links
+            .filter(link => link.source === addedNode && !link.target.isExt)
+            .map(link => link.target);
+          
+          if (addedTargets.length > 0) {
+            // Find the earliest target in our sorted list by contract name
+            const firstTargetIndex = sortedNodes.findIndex(n => 
+              addedTargets.some(t => t.contract === n.contract)
+            );
+            
+            if (firstTargetIndex >= 0) {
+              sortedNodes.splice(firstTargetIndex, 0, addedNode);
+            } else {
+              sortedNodes.unshift(addedNode); // Default to top
+            }
+          } else {
+            sortedNodes.unshift(addedNode);
+          }
+        }
+        
+        // Add Removed node right after the last contract that flows to it
+        if (removedNode) {
+          // Find contracts that flow to Removed
+          const removedSources = sankeyData.links
+            .filter(link => link.target === removedNode && !link.source.isExt)
+            .map(link => link.source);
+          
+          if (removedSources.length > 0) {
+            // Find the last source in our sorted list
+            const lastSourceIndex = sortedNodes.reduce((maxIdx, n, idx) => {
+              if (removedSources.some(s => s.contract === n.contract)) {
+                return idx;
+              }
+              return maxIdx;
+            }, -1);
+            
+            if (lastSourceIndex >= 0) {
+              sortedNodes.splice(lastSourceIndex + 1, 0, removedNode);
+            } else {
+              sortedNodes.push(removedNode); // Default to bottom
+            }
+          } else {
+            sortedNodes.push(removedNode);
+          }
+        }
+        
+        // Replace the column's nodes with sorted order
+        nodesInColumn.length = 0;
+        nodesInColumn.push(...sortedNodes);
+        
         // Reposition Y coordinates while keeping D3's calculated heights
-        let currentY = 65; // Start even lower to leave space for titles and headers
+        let currentY = 75; // Start lower to leave space for titles, headers, and day names
         
         nodesInColumn.forEach(node => {
           const nodeHeight = node.y1 - node.y0; // Keep D3's original calculated height
@@ -345,7 +455,7 @@
           node.x1 = node.x0 + 15;
           node.y0 = currentY;
           node.y1 = currentY + nodeHeight;
-          currentY = node.y1 + 5; // 5px padding
+          currentY = node.y1 + 14; // Use same padding as nodePadding
         });
       });
       
@@ -357,7 +467,20 @@
 
       // Create color scale for contracts
       const contracts = [...new Set(graph.nodes.filter(n => !n.isExt).map(n => n.contract))];
-      const colorScale = d3.scaleOrdinal(d3.schemeCategory10).domain(contracts);
+      const colorScale = d3.scaleOrdinal(d3.schemeTableau10.map(c => d3.color(c).darker(0.3))).domain(contracts);
+
+      // Calculate volume scale per contract
+      const contractVolumeScales = new Map();
+      contracts.forEach(contract => {
+        const volumes = data.map(dayData => getContractValue(dayData, contract, 'totalVolume')).filter(v => v > 0);
+        if (volumes.length > 0) {
+          const min = Math.min(...volumes);
+          const max = Math.max(...volumes);
+          contractVolumeScales.set(contract, d3.scaleLinear()
+            .domain([min, max])
+            .range([0.3, 1.0]));
+        }
+      });
 
       // Draw links with proper Sankey curves
       g.append('g')
@@ -366,16 +489,34 @@
         .join('path')
         .attr('d', sankeyLinkHorizontal())
         .attr('stroke', d => {
-          // D3 Sankey converts indices to node objects
           const sourceNode = d.source;
-          console.log('Link source:', sourceNode);
-          return sourceNode && sourceNode.isExt ? '#999' : 
-                 sourceNode && sourceNode.contract ? colorScale(sourceNode.contract) : '#1f77b4';
+          const targetNode = d.target;
+          // For Added node, use target contract color
+          if (sourceNode && sourceNode.isExt && sourceNode.name.includes('Added') && targetNode && targetNode.contract) {
+            return colorScale(targetNode.contract);
+          }
+          // For other External nodes, use gray
+          if (sourceNode && sourceNode.isExt) {
+            return '#999';
+          }
+          // For contract nodes, use their color
+          return sourceNode && sourceNode.contract ? colorScale(sourceNode.contract) : '#1f77b4';
         })
         .attr('stroke-width', d => Math.max(1, d.width))
         .attr('fill', 'none')
-        .style('mix-blend-mode', 'multiply')
         .attr('class', 'link')
+        .style('opacity', d => {
+          const sourceNode = d.source;
+          if (sourceNode && !sourceNode.isExt && sourceNode.contract) {
+            const scale = contractVolumeScales.get(sourceNode.contract);
+            if (scale) {
+              const dayData = data.find(day => day.tradeDate === sourceNode.date);
+              const volume = getContractValue(dayData, sourceNode.contract, 'totalVolume');
+              return volume > 0 ? scale(volume) : 0.3;
+            }
+          }
+          return 0.6;
+        })
         .append('title')
         .text(d => `${d.source.name || 'Unknown'} → ${d.target.name || 'Unknown'}\n${d.value.toLocaleString()}`);
 
@@ -386,71 +527,106 @@
         .join('g')
         .attr('class', 'node');
 
-      node.append('rect')
-        .attr('x', d => d.x0)
-        .attr('y', d => d.y0)
-        .attr('height', d => d.y1 - d.y0)
-        .attr('width', d => d.x1 - d.x0)
-        .attr('fill', d => {
-          if (d.isExt) return '#999';
-          const color = colorScale(d.contract);
-          console.log('Node color for', d.contract, ':', color);
-          return color || '#1f77b4';
-        })
-        .attr('stroke', '#000')
-        .attr('stroke-width', 1)
-        .append('title')
-        .text(d => `${fmtMMDD(d.date)} ${d.name}`);
+      node.each(function(d) {
+        const g = d3.select(this);
+        
+        if (d.isExt) {
+          // Draw path with 3 sides for External nodes
+          const x0 = d.x0, y0 = d.y0, x1 = d.x1, y1 = d.y1;
+          let pathData;
+          if (d.name.includes('Added')) {
+            // Missing right border: top, left, bottom
+            pathData = `M ${x1} ${y0} L ${x0} ${y0} L ${x0} ${y1} L ${x1} ${y1}`;
+          } else {
+            // Missing left border: top, right, bottom
+            pathData = `M ${x0} ${y0} L ${x1} ${y0} L ${x1} ${y1} L ${x0} ${y1}`;
+          }
+          g.append('path')
+            .attr('d', pathData)
+            .attr('fill', 'white')
+            .attr('stroke', '#ccc')
+            .attr('stroke-width', 1);
+        } else {
+          // Regular rect for contract nodes
+          g.append('rect')
+            .attr('x', x0 => d.x0)
+            .attr('y', y0 => d.y0)
+            .attr('height', d => d.y1 - d.y0)
+            .attr('width', d => d.x1 - d.x0)
+            .attr('fill', () => {
+              // Empty fill for contracts appearing for the first time
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return 'white';
+                }
+              }
+              const color = colorScale(d.contract);
+              return color || '#1f77b4';
+            })
+            .attr('fill-opacity', 0.4)
+            .attr('stroke', () => {
+              const color = d3.color(colorScale(d.contract) || '#1f77b4');
+              return color.darker(0.5);
+            })
+            .attr('stroke-width', () => {
+              // Thicker stroke for new nodes
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return 2;
+                }
+              }
+              return 1;
+            })
+            .attr('stroke-dasharray', () => {
+              // Dashed border for contracts appearing for the first time
+              if (d.column > 0) {
+                const prevDayDate = data[d.column - 1].tradeDate;
+                const prevDayNode = sankeyData.nodes.find(n => 
+                  n.date === prevDayDate && n.contract === d.contract && !n.isExt
+                );
+                if (!prevDayNode) {
+                  return '5,3';
+                }
+              }
+              return null;
+            })
+            .append('title')
+            .text(`${fmtMMDD(d.date)} ${d.name}`);
+        }
+      });
 
       node.append('text')
-        .attr('x', d => d.x0 < width / 2 ? d.x1 + 6 : d.x0 - 6)
+        .attr('x', d => {
+          if (d.isExt && d.name.includes('Added')) return d.x0 - 6;
+          return d.x1 + 6;
+        })
         .attr('y', d => (d.y1 + d.y0) / 2)
         .attr('dy', '0.35em')
-        .attr('text-anchor', d => d.x0 < width / 2 ? 'start' : 'end')
+        .attr('text-anchor', d => {
+          if (d.isExt && d.name.includes('Added')) return 'end';
+          return 'start';
+        })
         .style('font-size', '12px')
         .text(d => {
           if (d.isExt) {
-            // Calculate total flow for EXT nodes - D3 converts indices to objects
-            const totalFlow = sankeyData.links
-              .filter(link => 
-                (d.name.includes('IN') && link.target === d) ||
-                (d.name.includes('OUT') && link.source === d)
-              )
-              .reduce((sum, link) => sum + link.value, 0);
-            return `${d.name} | OI: ${totalFlow.toLocaleString()}`;
+            const total = (d.sourceLinks || []).reduce((sum, link) => sum + link.value, 0) +
+                         (d.targetLinks || []).reduce((sum, link) => sum + link.value, 0);
+            return `${d.name} | ${total.toLocaleString()}`;
           } else {
-            // Find the contract values for this day
             const dayData = data.find(day => day.tradeDate === d.date);
             const openInterest = getContractValue(dayData, d.contract, 'atClose');
             const volume = getContractValue(dayData, d.contract, 'totalVolume');
             return `${d.name} | OI: ${openInterest.toLocaleString()} | Vol: ${volume.toLocaleString()}`;
           }
         });
-
-      // Add main title and volume subtitle
-      g.append('text')
-        .attr('x', width / 2)
-        .attr('y', 15)
-        .attr('text-anchor', 'middle')
-        .style('font-size', '14px')
-        .style('font-weight', 'bold')
-        .text('COMEX Silver Open Interest Flow - Data from cmegroup.com/markets/metals/precious/silver.volume.html');
-
-      // Add volume information subtitle
-      const volumeInfo = data.map(dayData => {
-        const totalVolume = contracts.reduce((sum, contract) => {
-          return sum + getContractValue(dayData, contract, 'totalVolume');
-        }, 0);
-        return `${fmtMMDD(dayData.tradeDate)}: ${totalVolume.toLocaleString()}`;
-      }).join(' | ');
-
-      g.append('text')
-        .attr('x', width / 2)
-        .attr('y', 30)
-        .attr('text-anchor', 'middle')
-        .style('font-size', '10px')
-        .style('fill', '#666')
-        .text(`Daily Volume: ${volumeInfo}`);
 
       // Add column headers above the actual node columns
       const actualColumnPositions = {};
@@ -469,10 +645,20 @@
 
       const columnHeaders = Object.keys(actualColumnPositions).map(col => {
         const pos = actualColumnPositions[col];
+        const dayData = data.find(d => d.tradeDate === pos.date);
+        const totalVolume = contracts.reduce((sum, contract) => 
+          sum + getContractValue(dayData, contract, 'totalVolume'), 0);
+        const totalOI = contracts.reduce((sum, contract) => 
+          sum + getContractValue(dayData, contract, 'atClose'), 0);
+        const dateObj = new Date(pos.date.slice(0,4), parseInt(pos.date.slice(4,6))-1, pos.date.slice(6,8));
+        const dayName = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'][dateObj.getDay()];
         return {
           x: (pos.minX + pos.maxX) / 2,
           date: pos.date,
-          label: fmtMMDD(pos.date)
+          label: fmtMMDD(pos.date),
+          dayName,
+          totalVolume,
+          totalOI
         };
       });
 
@@ -481,11 +667,42 @@
         .join('text')
         .attr('class', 'column-header')
         .attr('x', d => d.x)
-        .attr('y', 50) // Moved down to make room for titles
+        .attr('y', 50)
         .attr('text-anchor', 'middle')
         .style('font-size', '12px')
         .style('font-weight', 'bold')
         .text(d => d.label);
+
+      g.selectAll('.column-day')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-day')
+        .attr('x', d => d.x)
+        .attr('y', 62)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .style('font-weight', 'bold')
+        .text(d => d.dayName);
+
+      g.selectAll('.column-oi')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-oi')
+        .attr('x', d => d.x)
+        .attr('y', 38)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .text(d => `OI: ${d.totalOI.toLocaleString()}`);
+
+      g.selectAll('.column-volume')
+        .data(columnHeaders)
+        .join('text')
+        .attr('class', 'column-volume')
+        .attr('x', d => d.x)
+        .attr('y', 26)
+        .attr('text-anchor', 'middle')
+        .style('font-size', '10px')
+        .text(d => `Vol: ${d.totalVolume.toLocaleString()}`);
     }
 
     (async function main() {
@@ -501,6 +718,10 @@
 
       window.addEventListener('resize', doRender);
       await doRender();
+      
+      // Scroll to the right
+      const chartDiv = document.getElementById('chart');
+      chartDiv.scrollLeft = chartDiv.scrollWidth;
     })();
   </script>
 </body>
