@@ -395,24 +395,35 @@
         // Find where to insert Added node
         let sortedNodes = [...contractNodes];
         if (addedNode) {
-          // Find first contract that receives flow from Added
+          // Find contracts in NEXT day that receive flow from Added
+          const nextDayColumn = parseInt(col) + 1;
+          const nextDayNodes = nodesByColumn[nextDayColumn] || [];
+          
           const addedTargets = sankeyData.links
             .filter(link => link.source === addedNode && !link.target.isExt)
             .map(link => link.target);
           
-          if (addedTargets.length > 0) {
-            // Find the earliest target in our sorted list by contract name
-            const firstTargetIndex = sortedNodes.findIndex(n => 
-              addedTargets.some(t => t.contract === n.contract)
-            );
+          if (addedTargets.length > 0 && nextDayNodes.length > 0) {
+            // Find which contracts in current day come BEFORE the first target in next day
+            // We want Added to be positioned based on where its targets will be in next day
+            const firstTargetContract = addedTargets[0].contract;
             
-            if (firstTargetIndex >= 0) {
-              sortedNodes.splice(firstTargetIndex, 0, addedNode);
+            // Find the position in current day's sorted contracts where this target would fit chronologically
+            const insertIndex = sortedNodes.findIndex(n => {
+              const pn = parseMonthID(n.contract);
+              const pt = parseMonthID(firstTargetContract);
+              if (pn[0] !== pt[0]) return pn[0] > pt[0];
+              if (pn[1] !== pt[1]) return pn[1] > pt[1];
+              return String(pn[2]).localeCompare(String(pt[2])) > 0;
+            });
+            
+            if (insertIndex >= 0) {
+              sortedNodes.splice(insertIndex, 0, addedNode);
             } else {
-              sortedNodes.unshift(addedNode); // Default to top
+              sortedNodes.push(addedNode); // After all contracts
             }
           } else {
-            sortedNodes.unshift(addedNode);
+            sortedNodes.unshift(addedNode); // Default to top
           }
         }
         
@@ -507,6 +518,19 @@
         .attr('class', 'link')
         .style('opacity', d => {
           const sourceNode = d.source;
+          const targetNode = d.target;
+          
+          // For Added bands, use target contract's volume on PREVIOUS day (to match the other incoming band)
+          if (sourceNode && sourceNode.isExt && sourceNode.name.includes('Added') && targetNode && targetNode.contract) {
+            const scale = contractVolumeScales.get(targetNode.contract);
+            if (scale && targetNode.column > 0) {
+              const prevDayData = data[targetNode.column - 1];
+              const volume = getContractValue(prevDayData, targetNode.contract, 'totalVolume');
+              return volume > 0 ? scale(volume) : 0.3;
+            }
+          }
+          
+          // For regular contract bands, use source contract's volume
           if (sourceNode && !sourceNode.isExt && sourceNode.contract) {
             const scale = contractVolumeScales.get(sourceNode.contract);
             if (scale) {
