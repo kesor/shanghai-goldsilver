@@ -88,6 +88,29 @@ This document catalogs available data endpoints for Gold futures (Product ID: 43
 **Usage:** Contract expiration dates, first notice dates, last trading days.
 **Potential Use:** Calendar view, expiration timeline, rollover alerts.
 
+### 9. Volatility Index (CVOL)
+**Endpoint:** `/services/cvol`
+**Parameters:**
+- `symbol=GCVL` (Gold) or `SIVL` (Silver)
+- `isProtected`
+- `_t={timestamp}`
+
+**Usage:** Implied volatility index for Gold futures.
+**Potential Use:** Volatility chart overlay, market sentiment indicator, risk gauge.
+**Note:** Shows market's expectation of future price volatility.
+
+## Long vs Short Positions
+
+**Important:** CME Open Interest data does NOT distinguish between long and short positions.
+
+- OI always represents matched pairs (1 long = 1 short)
+- CME only publishes total open contracts
+- For directional data, see CFTC Commitments of Traders (COT) reports:
+  - Published weekly (Fridays, 3-day delay)
+  - Breaks down by trader type (commercial, non-commercial, non-reportable)
+  - Available at: https://www.cftc.gov/MarketReports/CommitmentsofTraders/index.htm
+  - Separate data source, would require different fetching infrastructure
+
 ## Implementation Priority
 
 ### Phase 1: Gold Sankey (Same as Silver)
