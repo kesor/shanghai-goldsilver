@@ -411,25 +411,28 @@
         let sortedNodes = [...contractNodes];
         if (addedNode) {
           // Find contracts in NEXT day that receive flow from Added
-          const nextDayColumn = parseInt(col) + 1;
-          const nextDayNodes = nodesByColumn[nextDayColumn] || [];
-          
           const addedTargets = sankeyData.links
             .filter(link => link.source === addedNode && !link.target.isExt)
             .map(link => link.target);
           
-          if (addedTargets.length > 0 && nextDayNodes.length > 0) {
-            // Find which contracts in current day come BEFORE the first target in next day
-            // We want Added to be positioned based on where its targets will be in next day
-            const firstTargetContract = addedTargets[0].contract;
+          if (addedTargets.length > 0) {
+            // Sort targets chronologically and get the first one
+            const sortedTargets = addedTargets.sort((a, b) => {
+              const pa = parseMonthID(a.contract);
+              const pb = parseMonthID(b.contract);
+              if (pa[0] !== pb[0]) return pa[0] - pb[0];
+              if (pa[1] !== pb[1]) return pa[1] - pb[1];
+              return String(pa[2]).localeCompare(String(pb[2]));
+            });
+            const firstTargetContract = sortedTargets[0].contract;
             
-            // Find the position in current day's sorted contracts where this target would fit chronologically
+            // Find where this target contract would be positioned in current day
             const insertIndex = sortedNodes.findIndex(n => {
               const pn = parseMonthID(n.contract);
               const pt = parseMonthID(firstTargetContract);
-              if (pn[0] !== pt[0]) return pn[0] > pt[0];
-              if (pn[1] !== pt[1]) return pn[1] > pt[1];
-              return String(pn[2]).localeCompare(String(pt[2])) > 0;
+              if (pn[0] !== pt[0]) return pn[0] >= pt[0];
+              if (pn[1] !== pt[1]) return pn[1] >= pt[1];
+              return String(pn[2]).localeCompare(String(pt[2])) >= 0;
             });
             
             if (insertIndex >= 0) {
