@@ -5,12 +5,16 @@
   <title>COMEX Silver Open Interest Flow</title>
   <style>
     html, body { height: 100%; margin: 0; font-family: system-ui, sans-serif; overflow: hidden; }
-    #header { padding: 15px 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; }
+    #header { padding: 15px 20px; background: #f5f5f5; border-bottom: 2px solid #ddd; display: grid; grid-template-columns: 1fr auto; gap: 20px; }
+    #header-left { display: flex; flex-direction: column; }
     #header h1 { margin: 0 0 8px 0; font-size: 22px; }
     #header .columns { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
     #header p { margin: 4px 0; line-height: 1.4; font-size: 13px; }
     #header ul { margin: 4px 0; padding-left: 18px; line-height: 1.4; font-size: 13px; }
     #header a { color: #0066cc; }
+    #charts-container { display: flex; flex-direction: column; gap: 8px; }
+    .mini-chart { width: 300px; height: 40px; }
+    .mini-chart text { font-size: 10px; fill: #666; }
     #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
     
     .node rect { stroke-width: 1px; }
@@ -21,26 +25,32 @@
 </head>
 <body>
   <div id="header">
-    <h1>COMEX Silver Open Interest Flow</h1>
-    <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures</a> | Shows top 7 contract months per day | Band width = OI amount | Band darkness = trading volume</p>
-    <div class="columns">
-      <div>
-        <p><strong>Visual Elements:</strong></p>
-        <ul>
-          <li><strong>Added:</strong> New positions or contracts entering top 7</li>
-          <li><strong>Removed:</strong> Positions closed or contracts leaving top 7</li>
-          <li><strong>Dashed borders:</strong> Contracts appearing for first time</li>
-          <li><strong>Band colors:</strong> Match target contract</li>
-        </ul>
+    <div id="header-left">
+      <h1>COMEX Silver Open Interest Flow</h1>
+      <p><strong>Data Source:</strong> <a href="https://www.cmegroup.com/markets/metals/precious/silver.volume.html" target="_blank">CME Group - Silver Futures</a> | Shows top 7 contract months per day | Band width = OI amount | Band darkness = trading volume</p>
+      <div class="columns">
+        <div>
+          <p><strong>Visual Elements:</strong></p>
+          <ul>
+            <li><strong>Added:</strong> New positions or contracts entering top 7</li>
+            <li><strong>Removed:</strong> Positions closed or contracts leaving top 7</li>
+            <li><strong>Dashed borders:</strong> Contracts appearing for first time</li>
+            <li><strong>Band colors:</strong> Match target contract</li>
+          </ul>
+        </div>
+        <div>
+          <p><strong>Disclaimers:</strong></p>
+          <ul>
+            <li>OI doesn't distinguish long vs short positions</li>
+            <li>Flow routing uses bucket-fill algorithm (aggregate changes only)</li>
+            <li>Only top 7 contracts shown; totals include all contracts</li>
+          </ul>
+        </div>
       </div>
-      <div>
-        <p><strong>Disclaimers:</strong></p>
-        <ul>
-          <li>OI doesn't distinguish long vs short positions</li>
-          <li>Flow routing uses bucket-fill algorithm (aggregate changes only)</li>
-          <li>Only top 7 contracts shown; totals include all contracts</li>
-        </ul>
-      </div>
+    </div>
+    <div id="charts-container">
+      <svg id="oi-chart" class="mini-chart"></svg>
+      <svg id="vol-chart" class="mini-chart"></svg>
     </div>
   </div>
   <div id="chart"></div>
@@ -327,9 +337,71 @@
       return { nodes: filteredNodes, links: filteredLinks };
     }
 
+    function renderMiniCharts(data) {
+      const totals = data.map(dayData => ({
+        date: dayData.tradeDate,
+        oi: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.atClose), 0),
+        vol: (dayData.monthData || []).reduce((sum, item) => sum + cleanNumber(item.totalVolume), 0)
+      }));
+
+      const margin = { top: 15, right: 5, bottom: 15, left: 50 };
+      const width = 300 - margin.left - margin.right;
+      const height = 40 - margin.top - margin.bottom;
+
+      // OI Chart
+      const oiSvg = d3.select('#oi-chart');
+      oiSvg.selectAll('*').remove();
+      const oiG = oiSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      
+      const xScale = d3.scaleBand().domain(totals.map(d => d.date)).range([0, width]).padding(0.1);
+      const oiScale = d3.scaleLinear().domain([0, d3.max(totals, d => d.oi)]).range([height, 0]);
+      
+      oiG.selectAll('rect')
+        .data(totals)
+        .join('rect')
+        .attr('x', d => xScale(d.date))
+        .attr('y', d => oiScale(d.oi))
+        .attr('width', xScale.bandwidth())
+        .attr('height', d => height - oiScale(d.oi))
+        .attr('fill', '#4682b4');
+      
+      oiG.append('text')
+        .attr('x', -5)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text('Total OI');
+
+      // Volume Chart
+      const volSvg = d3.select('#vol-chart');
+      volSvg.selectAll('*').remove();
+      const volG = volSvg.append('g').attr('transform', `translate(${margin.left},${margin.top})`);
+      
+      const volScale = d3.scaleLinear().domain([0, d3.max(totals, d => d.vol)]).range([height, 0]);
+      
+      volG.selectAll('rect')
+        .data(totals)
+        .join('rect')
+        .attr('x', d => xScale(d.date))
+        .attr('y', d => volScale(d.vol))
+        .attr('width', xScale.bandwidth())
+        .attr('height', d => height - volScale(d.vol))
+        .attr('fill', '#ff7f0e');
+      
+      volG.append('text')
+        .attr('x', -5)
+        .attr('y', height / 2)
+        .attr('text-anchor', 'end')
+        .attr('dominant-baseline', 'middle')
+        .text('Total Vol');
+    }
+
     function render(data) {
       const container = d3.select('#chart');
       container.selectAll('*').remove();
+      
+      // Render mini charts in header
+      renderMiniCharts(data);
       
       const graph = buildRollingGraph(data);
       
