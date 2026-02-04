@@ -1,21 +1,17 @@
 #!/usr/bin/env bash
 
-# Usage: ./fetch_gold.sh [YYYYMMDD]
-# If no date provided, fetches today or all missing trading days
-
-# Read cookies from cookies.txt
-if [ ! -f "cookies.txt" ]; then
-  echo "Error: cookies.txt not found"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [ ! -f "$SCRIPT_DIR/cookies.txt" ]; then
+  echo "ERROR: cookies.txt not found in $SCRIPT_DIR"
   exit 1
 fi
-COOKIES=$(cat cookies.txt)
+COOKIES=$(cat "$SCRIPT_DIR/cookies.txt")
 
 fetch_date() {
   local DATE=$1
   local FORMATTED_DATE="${DATE:0:4}-${DATE:4:2}-${DATE:6:2}"
-  local OUTPUT="gold/${FORMATTED_DATE}-data.json"
+  local OUTPUT="$HOME/kesor.net/comex/gold/${FORMATTED_DATE}-data.json"
   
-  # Skip if already exists
   if [ -f "$OUTPUT" ]; then
     echo "Skipping $OUTPUT (already exists)"
     return 0
@@ -30,21 +26,32 @@ fetch_date() {
     -b "$COOKIES" \
     -H 'dnt: 1' \
     -H 'pragma: no-cache' \
+    -H 'priority: u=1, i' \
     -H 'referer: https://www.cmegroup.com/markets/metals/precious/gold.volume.html' \
+    -H 'sec-ch-ua: "Not(A:Brand";v="8", "Chromium";v="144", "Brave";v="144"' \
+    -H 'sec-ch-ua-mobile: ?0' \
+    -H 'sec-ch-ua-platform: "Linux"' \
     -H 'sec-fetch-dest: empty' \
     -H 'sec-fetch-mode: cors' \
     -H 'sec-fetch-site: same-origin' \
+    -H 'sec-gpc: 1' \
     -H 'user-agent: Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/144.0.0.0 Safari/537.36' \
-    | jq '.' > "$OUTPUT"
+    > "$OUTPUT"
   
   if [ -s "$OUTPUT" ]; then
     echo "Fetched data to $OUTPUT"
-    
-    # Update manifest
-    cd gold
-    jq ". += [\"${FORMATTED_DATE}-data.json\"] | sort | unique" manifest.json > manifest.json.tmp
-    mv manifest.json.tmp manifest.json
-    cd ..
+    python3 -c "
+import json
+manifest_file = '$HOME/kesor.net/comex/gold/manifest.json'
+with open(manifest_file) as f:
+    data = json.load(f)
+filename = '${FORMATTED_DATE}-data.json'
+if filename not in data:
+    data.append(filename)
+    data.sort()
+with open(manifest_file, 'w') as f:
+    json.dump(data, f)
+"
   else
     echo "Failed to fetch $OUTPUT"
     rm -f "$OUTPUT"
@@ -52,11 +59,8 @@ fetch_date() {
   fi
 }
 
-# If date provided, fetch that date
 if [ -n "$1" ]; then
   fetch_date "$1"
 else
-  # Fetch today
-  TODAY=$(date +%Y%m%d)
-  fetch_date "$TODAY"
+  fetch_date "$(date +%Y%m%d)"
 fi

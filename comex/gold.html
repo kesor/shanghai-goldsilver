@@ -17,7 +17,13 @@
     .mini-chart text { font-size: 10px; fill: #666; }
     .mini-chart rect { cursor: crosshair; }
     #chart-tooltip { position: fixed; background: rgba(0,0,0,0.8); color: white; padding: 5px 8px; border-radius: 3px; font-size: 11px; pointer-events: none; display: none; white-space: nowrap; z-index: 1000; }
-    #chart { height: calc(100% - 20px); overflow-x: auto; overflow-y: auto; }
+    #scrollbar-container { height: 20px; overflow-x: scroll; overflow-y: hidden; }
+    #scrollbar-content { height: 1px; }
+    #chart { height: calc(100% - 40px); overflow-x: scroll; overflow-y: hidden; padding-bottom: 15px; box-sizing: border-box; }
+    #chart::-webkit-scrollbar { height: 12px; }
+    #chart::-webkit-scrollbar-track { background: #f1f1f1; }
+    #chart::-webkit-scrollbar-thumb { background: #888; }
+    #chart::-webkit-scrollbar-thumb:hover { background: #555; }
     
     .node rect { stroke-width: 1px; }
     .node text { font-size: 12px; fill: #000; }
@@ -56,6 +62,7 @@
       <div id="chart-tooltip"></div>
     </div>
   </div>
+  <div id="scrollbar-container"><div id="scrollbar-content"></div></div>
   <div id="chart"></div>
 
   <script type="module">
@@ -959,9 +966,25 @@
       window.addEventListener('resize', doRender);
       await doRender();
       
-      // Scroll to the right
+      // Sync scrollbars and scroll to the right
       const chartDiv = document.getElementById('chart');
+      const scrollbarDiv = document.getElementById('scrollbar-container');
+      const scrollbarContent = document.getElementById('scrollbar-content');
+      
+      // Set scrollbar content width to match chart content
+      scrollbarContent.style.width = chartDiv.scrollWidth + 'px';
+      
+      // Sync scroll positions
+      scrollbarDiv.addEventListener('scroll', () => {
+        chartDiv.scrollLeft = scrollbarDiv.scrollLeft;
+      });
+      chartDiv.addEventListener('scroll', () => {
+        scrollbarDiv.scrollLeft = chartDiv.scrollLeft;
+      });
+      
+      // Scroll to the right
       chartDiv.scrollLeft = chartDiv.scrollWidth;
+      scrollbarDiv.scrollLeft = scrollbarDiv.scrollWidth;
     })();
   </script>
 </body>
