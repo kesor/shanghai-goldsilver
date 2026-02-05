@@ -1,0 +1,16 @@
+# Disable caching for manifest.json files
+<FilesMatch "manifest\.json$">
+  Header set Cache-Control "no-cache, no-store, must-revalidate"
+  Header set Pragma "no-cache"
+  Header set Expires "0"
+</FilesMatch>
+
+# Cache data files for 1 year (immutable)
+<FilesMatch ".*-data\.json$">
+  Header set Cache-Control "max-age=31536000, public, immutable"
+</FilesMatch>
+
+# Cache HTML files for 5 minutes
+<FilesMatch "\.(html)$">
+  Header set Cache-Control "max-age=300, public"
+</FilesMatch>
