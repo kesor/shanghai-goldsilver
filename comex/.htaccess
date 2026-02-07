@@ -10,12 +10,7 @@
   Header set Cache-Control "max-age=31536000, public, immutable"
 </FilesMatch>
 
-# Cache HTML files for 5 minutes
-<FilesMatch "\.(html)$">
-  Header set Cache-Control "max-age=300, public"
-</FilesMatch>
-
-# Cache JS and CSS files for 1 hour
-<FilesMatch "\.(js|css)$">
-  Header set Cache-Control "max-age=3600, public"
+# Cache HTML, JS and CSS files for 1 day
+<FilesMatch "\.(html|js|css)$">
+  Header set Cache-Control "max-age=86400, public"
 </FilesMatch>
