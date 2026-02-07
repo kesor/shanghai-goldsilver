@@ -14,3 +14,8 @@
 <FilesMatch "\.(html)$">
   Header set Cache-Control "max-age=300, public"
 </FilesMatch>
+
+# Cache JS and CSS files for 1 hour
+<FilesMatch "\.(js|css)$">
+  Header set Cache-Control "max-age=3600, public"
+</FilesMatch>
