@@ -7,7 +7,7 @@ export function renderSankey(data, graph) {
   container.selectAll('*').remove();
   
   const margin = {top: 20, right: 20, bottom: 80, left: 150};
-  const width = 350 * data.length;
+  const width = 245 * data.length;
   const height = container.node().clientHeight - margin.top - margin.bottom;
   
   const svg = container.append('svg').attr('width', width + margin.left + margin.right).attr('height', height + margin.top + margin.bottom);
@@ -19,6 +19,7 @@ export function renderSankey(data, graph) {
 
   const sankeyData = sankey({nodes: graph.nodes.map(n => ({...n})), links: graph.links.map(l => ({...l}))});
   positionNodes(sankeyData, data, width / data.length);
+  adjustNodePadding(sankeyData);
   sankey.update(sankeyData);
 
   const contracts = [...new Set(graph.nodes.filter(n => !n.isExt).map(n => n.contract))];
@@ -32,6 +33,26 @@ export function renderSankey(data, graph) {
   drawLinks(g, sankeyData, data, colorScale, volumeScales);
   drawNodes(g, sankeyData, data, colorScale);
   drawHeaders(g, sankeyData, data);
+}
+
+function adjustNodePadding(sankeyData) {
+  const nodesByColumn = {};
+  sankeyData.nodes.forEach(node => {
+    if (!nodesByColumn[node.column]) nodesByColumn[node.column] = [];
+    nodesByColumn[node.column].push(node);
+  });
+  
+  Object.values(nodesByColumn).forEach(nodesInColumn => {
+    let currentY = nodesInColumn[0].y0;
+    nodesInColumn.forEach(node => {
+      const nodeHeight = node.y1 - node.y0;
+      const textHeight = node.isExt ? 12 : 36;
+      const minPadding = Math.max(14, textHeight - nodeHeight + 8);
+      node.y0 = currentY;
+      node.y1 = currentY + nodeHeight;
+      currentY = node.y1 + minPadding;
+    });
+  });
 }
 
 function positionNodes(sankeyData, data, columnWidth) {
@@ -136,21 +157,52 @@ function drawNodes(g, sankeyData, data, colorScale) {
     }
   });
 
-  node.append('text')
-    .attr('x', d => d.isExt && d.isAdded ? d.x0 - 6 : d.x1 + 6)
-    .attr('y', d => (d.y1 + d.y0) / 2)
-    .attr('dy', '0.35em')
-    .attr('text-anchor', d => d.isExt && d.isAdded ? 'end' : 'start')
-    .style('font-size', '12px')
-    .text(d => {
-      if (d.isExt) {
-        const total = (d.sourceLinks || []).reduce((sum, link) => sum + link.value, 0) + (d.targetLinks || []).reduce((sum, link) => sum + link.value, 0);
-        return `${d.isAdded ? 'Added' : 'Removed'} | ${total.toLocaleString()}`;
-      }
+  node.each(function(d) {
+    const g = d3.select(this);
+    const x = d.isExt && d.isAdded ? d.x0 - 6 : d.x1 + 6;
+    const anchor = d.isExt && d.isAdded ? 'end' : 'start';
+    
+    if (d.isExt) {
+      const total = (d.sourceLinks || []).reduce((sum, link) => sum + link.value, 0) + (d.targetLinks || []).reduce((sum, link) => sum + link.value, 0);
+      g.append('text').attr('x', x).attr('y', (d.y1 + d.y0) / 2).attr('dy', '0.35em').attr('text-anchor', anchor).style('font-size', '12px')
+        .text(`${d.isAdded ? 'Added' : 'Removed'} | ${total.toLocaleString()}`);
+    } else {
       const dayData = data.find(day => day.tradeDate === d.date);
-      if (!dayData) return fmtContract(d.contract);
-      return `${fmtContract(d.contract)} | OI: ${getContractValue(dayData, d.contract, 'atClose').toLocaleString()} | Vol: ${getContractValue(dayData, d.contract, 'totalVolume').toLocaleString()}`;
-    });
+      if (!dayData) {
+        g.append('text').attr('x', x).attr('y', (d.y1 + d.y0) / 2).attr('dy', '0.35em').attr('text-anchor', anchor).style('font-size', '12px').text(fmtContract(d.contract));
+        return;
+      }
+      
+      const oi = getContractValue(dayData, d.contract, 'atClose');
+      const vol = getContractValue(dayData, d.contract, 'totalVolume');
+      const prevDayData = d.column > 0 ? data[d.column - 1] : null;
+      const prevOI = prevDayData ? getContractValue(prevDayData, d.contract, 'atClose') : 0;
+      const prevVol = prevDayData ? getContractValue(prevDayData, d.contract, 'totalVolume') : 0;
+      const deltaOI = prevOI > 0 ? oi - prevOI : 0;
+      const deltaVol = prevVol > 0 ? vol - prevVol : 0;
+      
+      const oiStr = oi.toLocaleString();
+      const volStr = vol.toLocaleString();
+      const deltaOIStr = deltaOI !== 0 ? `(${(deltaOI > 0 ? '+' : '') + deltaOI.toLocaleString()})` : '';
+      const deltaVolStr = deltaVol !== 0 ? `(${(deltaVol > 0 ? '+' : '') + deltaVol.toLocaleString()})` : '';
+      
+      const maxMain = Math.max(oiStr.length, volStr.length);
+      const maxDelta = Math.max(deltaOIStr.length, deltaVolStr.length);
+      
+      const lines = [
+        {text: fmtContract(d.contract), mono: false},
+        {text: `\u00a0OI:\u00a0${'\u00a0'.repeat(maxMain - oiStr.length)}${oiStr}\u00a0\u00a0${'\u00a0'.repeat(maxDelta - deltaOIStr.length)}${deltaOIStr}`, mono: true},
+        {text: `Vol:\u00a0${'\u00a0'.repeat(maxMain - volStr.length)}${volStr}\u00a0\u00a0${'\u00a0'.repeat(maxDelta - deltaVolStr.length)}${deltaVolStr}`, mono: true}
+      ];
+      const lineHeight = 12;
+      const nodeHeight = d.y1 - d.y0;
+      const startY = nodeHeight < 28 ? d.y0 : (d.y1 + d.y0) / 2 - (lines.length - 1) * lineHeight / 2;
+      
+      lines.forEach((line, i) => {
+        g.append('text').attr('x', x).attr('y', startY + i * lineHeight).attr('dy', '0.35em').attr('text-anchor', anchor).style('font-size', '10px').style('font-family', line.mono ? 'monospace' : 'sans-serif').text(line.text);
+      });
+    }
+  });
 }
 
 function drawHeaders(g, sankeyData, data) {
