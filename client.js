@@ -15,7 +15,7 @@ const silverChart = new CandleChart("silver-chart", {
 goldChart.render([]);
 silverChart.render([]);
 
-const priceStream = new PriceStream("ws://localhost:8001")
+const priceStream = new PriceStream("ws://localhost:18801")
   .on("gold", (data) => goldChart.render(createOHLC(data)))
   .on("silver", (data) => silverChart.render(createOHLC(data)));
 

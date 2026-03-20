@@ -101,8 +101,8 @@ class TestWSConfig:
         """Test default configuration values."""
         cfg = WSConfig()
         assert cfg.host == "localhost"
-        assert cfg.ws_port == 8001
-        assert cfg.http_port == 8000
+        assert cfg.ws_port == 18801
+        assert cfg.http_port == 18800
         assert cfg.db_path == "shanghai_metals.db"
         assert cfg.lookback_hours == 36
         assert cfg.poll_sec == 1.0

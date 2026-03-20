@@ -14,8 +14,8 @@ import websockets.server
 @dataclass(frozen=True)
 class WSConfig:
     host: str = "localhost"
-    ws_port: int = 8001
-    http_port: int = 8000
+    ws_port: int = 18801
+    http_port: int = 18800
     db_path: str = "shanghai_metals.db"
     lookback_hours: int = 6
     poll_sec: float = 1.0

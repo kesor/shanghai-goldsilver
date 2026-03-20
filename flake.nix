@@ -12,14 +12,14 @@
       pkgs = nixpkgs.legacyPackages.${system};
       
       # Runtime dependencies only
-      pythonEnv = pkgs.python3.withPackages (ps: [
+      pythonEnv = pkgs.python313.withPackages (ps: [
         ps.pytz
         ps.requests
         ps.websockets
       ]);
       
       # Development dependencies
-      pythonDevEnv = pkgs.python3.withPackages (ps: [
+      pythonDevEnv = pkgs.python313.withPackages (ps: [
         ps.pytz
         ps.requests
         ps.websockets

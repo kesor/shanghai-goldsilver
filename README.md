@@ -44,7 +44,7 @@ python3 collector.py
 # Start WebSocket server (serves data to frontend)
 python3 websocket_metals.py
 
-# Open browser to http://localhost:8000
+# Open browser to http://localhost:18800
 ```
 
 ## Components
